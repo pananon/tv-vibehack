@@ -9,6 +9,7 @@ import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.media.tv.TvContract;
+import android.net.Uri;
 import android.media.tv.TvInputInfo;
 import android.media.tv.TvInputManager;
 import android.net.ConnectivityManager;
@@ -24,6 +25,7 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.animation.AnimationUtils;
 import android.view.animation.LayoutAnimationController;
 import android.widget.FrameLayout;
@@ -318,6 +320,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
             if (position < COLUMNS) return false;          // dock row: let focus move to the top bar
             target = position - COLUMNS;
+            while (target >= 0 && adapter.isEmptySlot(target)) target--;   // empty dock slot: nearest app
+            if (target < 0) return false;
         } else {
             int lastRowStart = ((count - 1) / COLUMNS) * COLUMNS;
             if (position >= lastRowStart) return true;     // already on the last row: stay put
@@ -327,9 +331,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         return true;
     }
 
+    @Override
+    public boolean onTileRightKey(int position) {
+        // The last app in a short dock: don't let focus fall diagonally into the grid.
+        return position < COLUMNS - 1 && adapter.isEmptySlot(position + 1);
+    }
+
     private void focusTile(int position) {
         if (adapter.getItemCount() == 0) return;
-        final int pos = Math.max(0, Math.min(position, adapter.getItemCount() - 1));
+        int p = Math.max(0, Math.min(position, adapter.getItemCount() - 1));
+        while (p > 0 && adapter.isEmptySlot(p)) p--;
+        while (p < adapter.getItemCount() - 1 && adapter.isEmptySlot(p)) p++;
+        final int pos = p;
         RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(pos);
         if (vh != null) {
             View card = vh.itemView.findViewById(R.id.card);
@@ -457,6 +470,125 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         panel.animate().alpha(1f).scaleY(1f).translationY(0f).setDuration(220)
                 .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f)).start();
         rows.getChildAt(0).requestFocus();
+    }
+
+    // ---- dock editing ----------------------------------------------------------------------------
+
+    /** Menu on a tile (Menu key or long-press OK): reorder, add, replace or remove dock apps, app info. */
+    @Override
+    public void onTileMenu(int position, View card) {
+        final String pkg = adapter.pkgAt(position);
+        final String key = adapter.keyAt(position);
+        if (pkg == null) return;
+        final List<String> dock = adapter.dockApps();
+        final int idx = dock.indexOf(pkg);
+
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        final PopupWindow popup = new PopupWindow(panel, (int) (230 * density),
+                ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));   // needed for Back to dismiss
+        popup.setOutsideTouchable(true);
+        popup.setAnimationStyle(0);
+        popup.setElevation(0f);
+
+        addMenuHeader(rows, adapter.labelAt(position));
+        if (idx >= 0) {
+            if (idx > 0) {
+                addMenuRow(rows, popup, getString(R.string.dock_move_left), () -> {
+                    Collections.swap(dock, idx, idx - 1);
+                    saveDock(dock, key);
+                });
+            }
+            if (idx < dock.size() - 1) {
+                addMenuRow(rows, popup, getString(R.string.dock_move_right), () -> {
+                    Collections.swap(dock, idx, idx + 1);
+                    saveDock(dock, key);
+                });
+            }
+            addMenuRow(rows, popup, getString(R.string.dock_remove), () -> {
+                dock.remove(idx);
+                saveDock(dock, key);
+            });
+        } else if (dock.size() < COLUMNS) {
+            addMenuRow(rows, popup, getString(R.string.dock_add), () -> {
+                dock.add(pkg);
+                saveDock(dock, key);
+            });
+        } else {
+            for (int i = 0; i < dock.size(); i++) {
+                final int slot = i;
+                addMenuRow(rows, popup, getString(R.string.dock_replace, adapter.labelOf(dock.get(i))), () -> {
+                    dock.set(slot, pkg);
+                    saveDock(dock, key);
+                });
+            }
+        }
+        addSeparator(rows);
+        addMenuRow(rows, popup, getString(R.string.app_info), () -> open(
+                new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg))));
+
+        // Below the tile, or above it when there is no room: the dock row sits at the bottom of the
+        // screen, and PopupWindow would otherwise just push the menu off the edge.
+        panel.measure(View.MeasureSpec.makeMeasureSpec((int) (230 * density), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int menuHeight = panel.getMeasuredHeight();
+        int gap = (int) (10 * density + card.getHeight() * (AppAdapter.FOCUS_SCALE - 1f) / 2f);
+        int[] loc = new int[2];
+        card.getLocationInWindow(loc);
+        int roomBelow = root.getHeight() - (loc[1] + card.getHeight());
+        int yOff = roomBelow >= menuHeight + 2 * gap ? gap : -(card.getHeight() + menuHeight + gap);
+        popup.showAsDropDown(card, 0, yOff, Gravity.START);
+        for (int i = 0; i < rows.getChildCount(); i++) {
+            if (rows.getChildAt(i).isFocusable()) {
+                rows.getChildAt(i).requestFocus();
+                break;
+            }
+        }
+    }
+
+    /** Saves the dock, rebuilds the tiles and keeps focus on the app that was edited. */
+    private void saveDock(List<String> dock, String focusKey) {
+        DockPrefs.save(this, dock);
+        lastFocusedKey = focusKey;
+        adapter.reload();
+        grid.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override
+            public void onGlobalLayout() {
+                grid.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                int pos = adapter.positionOf(focusKey);
+                if (pos >= 0) focusTile(pos);
+            }
+        });
+    }
+
+    private void addMenuHeader(LinearLayout rows, String title) {
+        TextView header = new TextView(this);
+        header.setText(title);
+        header.setTextColor(0x99FFFFFF);
+        header.setTextSize(12);
+        header.setAllCaps(true);
+        header.setLetterSpacing(0.12f);
+        header.setTypeface(getResources().getFont(R.font.outfit));
+        header.setSingleLine(true);
+        int h = (int) (12 * density), v = (int) (8 * density);
+        header.setPadding(h, v, h, v);
+        rows.addView(header);
+    }
+
+    private void addMenuRow(LinearLayout rows, PopupWindow popup, String title, Runnable action) {
+        View row = getLayoutInflater().inflate(R.layout.item_input, rows, false);
+        row.findViewById(R.id.icon).setVisibility(View.GONE);
+        row.findViewById(R.id.dot).setVisibility(View.GONE);
+        row.findViewById(R.id.status).setVisibility(View.GONE);
+        TextView label = row.findViewById(R.id.title);
+        label.setText(title);
+        ((LinearLayout.LayoutParams) label.getLayoutParams()).setMarginStart(0);
+        row.setOnClickListener(v -> {
+            popup.dismiss();
+            action.run();
+        });
+        rows.addView(row);
     }
 
     private void addSeparator(LinearLayout rows) {

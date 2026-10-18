@@ -123,6 +123,27 @@ def find_tv(mac, port):
     return None
 
 
+# ---- sleep timer ---------------------------------------------------------------------------------
+# The timer runs on the TV itself, so it still fires when this PC is off or the remote is closed.
+# Its end time (TV clock) lives in a file there, so a reopened remote can show the time left.
+
+TIMER_PID = "/data/local/tmp/tvremote-sleep.pid"
+TIMER_END = "/data/local/tmp/tvremote-sleep.end"
+
+
+def sleep_timer_cancel_cmd():
+    return f"kill $(cat {TIMER_PID} 2>/dev/null) 2>/dev/null; rm -f {TIMER_PID} {TIMER_END}"
+
+
+def sleep_timer_start_cmd(minutes):
+    secs = int(minutes * 60)
+    # setsid + nohup detach it from this adb session. The trailing `sleep 1` matters: if the session
+    # ends immediately, adbd kills the job before setsid has detached it.
+    return (f"{sleep_timer_cancel_cmd()}; echo $(( $(date +%s) + {secs} )) > {TIMER_END}; "
+            f"(setsid nohup sh -c 'echo $$ > {TIMER_PID}; sleep {secs} && input keyevent KEYCODE_SLEEP; "
+            f"rm -f {TIMER_PID} {TIMER_END}' > /dev/null 2>&1 < /dev/null &); sleep 1")
+
+
 # ---- connections ---------------------------------------------------------------------------------
 
 
@@ -284,12 +305,16 @@ class Monitor:
 
     def _read_status(self):
         out = self.dev.shell("dumpsys power | grep -m1 mWakefulness=; "
-                             "cmd media_session volume --stream 3 --get 2>&1 | tail -1",
+                             "cmd media_session volume --stream 3 --get 2>&1 | tail -1; "
+                             f"if kill -0 $(cat {TIMER_PID} 2>/dev/null) 2>/dev/null; "
+                             f"then echo SLEEP_END=$(cat {TIMER_END}); fi; echo NOW=$(date +%s)",
                              read_timeout_s=10.0)
         awake = "Asleep" not in out and "Dozing" not in out
         m = re.search(r"volume is (\d+) in range \[(\d+)\.\.(\d+)\]", out)
         vol = (int(m.group(1)), int(m.group(3))) if m else None
-        self.on_info(awake, vol)
+        end, now = re.search(r"SLEEP_END=(\d+)", out), re.search(r"NOW=(\d+)", out)
+        sleep_left = max(0, int(end.group(1)) - int(now.group(1))) if end and now else None
+        self.on_info(awake, vol, sleep_left)
 
     def _grab_frame(self):
         data = self.dev.shell("screencap -p", decode=False, read_timeout_s=20.0)
@@ -372,6 +397,7 @@ class RemoteApp:
 
         self.status_text = tk.StringVar(value="Starting…")
         self.vol_text = tk.StringVar(value="Volume –")
+        self.sleep_text = tk.StringVar(value="Off")
         self.awake = True
         self.connected = False
         self.dragging_volume = False
@@ -407,7 +433,8 @@ class RemoteApp:
         if state == "ok":
             self.monitor.poke()
 
-    def _set_info(self, awake, vol):
+    def _set_info(self, awake, vol, sleep_left=None):
+        self._show_sleep(sleep_left)
         if awake != self.awake:
             self.awake = awake
             base = self.status_text.get().replace(" · TV asleep", "")
@@ -418,6 +445,22 @@ class RemoteApp:
             self.volume.config(to=top)
             self.volume.set(level)
             self.vol_text.set(f"Volume {level}")
+
+    def _show_sleep(self, secs):
+        if secs is None:
+            self.sleep_text.set("Off")
+        else:
+            mins = (secs + 59) // 60
+            self.sleep_text.set(f"TV sleeps in {mins} min" if mins > 1 else "TV sleeps in under a minute")
+
+    def _sleep_in(self, minutes):
+        if minutes:
+            self.link.shell(sleep_timer_start_cmd(minutes))
+            self._show_sleep(minutes * 60)
+        else:
+            self.link.shell(sleep_timer_cancel_cmd())
+            self._show_sleep(None)
+        self.root.after(2500, self.monitor.poke)   # confirm from the TV
 
     def _show_frame(self, png):
         if not self.monitor.preview:
@@ -588,6 +631,17 @@ class RemoteApp:
         self.volume.bind("<B1-Motion>", lambda e: self.vol_text.set(f"Volume {int(self.volume.get())}"))
 
         # apps
+        # sleep timer
+        sec = self._section("sleep", fill="x", **px)
+        head = tk.Frame(sec, bg=BG)
+        head.pack(fill="x", pady=(10, 2))
+        tk.Label(head, text="SLEEP TIMER", bg=BG, fg=DIM, font=CAPTION).pack(side="left")
+        tk.Label(head, textvariable=self.sleep_text, bg=BG, fg=FG, font=SMALL).pack(side="right")
+        row = tk.Frame(sec, bg=BG)
+        row.pack()
+        for label, minutes in (("30 min", 30), ("60 min", 60), ("90 min", 90), ("Off", 0)):
+            Button(row, label, lambda m=minutes: self._sleep_in(m), w=54, h=32, font=SMALL).pack(side="left", padx=2)
+
         sec = self._section("apps", fill="x", **px)
         tk.Label(sec, text="APPS", bg=BG, fg=DIM, font=CAPTION).pack(anchor="w", pady=(10, 2))
         grid = tk.Frame(sec, bg=BG)

@@ -5,7 +5,8 @@
 -->
 <resources>
 
-    <!-- Apps pinned to the dock row at the bottom, in this order. Missing apps are skipped. -->
+    <!-- Starting dock order. Edit the dock on the TV afterwards: press Menu (or hold OK) on a tile.
+         Missing apps are skipped. -->
     <string-array name="dock_apps">
         <item>com.netflix.ninja</item>
         <item>com.amazon.amazonvideo.livingroom</item>

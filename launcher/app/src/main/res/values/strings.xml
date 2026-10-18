@@ -17,4 +17,10 @@
     <string name="ethernet">Ethernet</string>
     <string name="offline">Offline</string>
     <string name="dream_name">Clock</string>
+    <string name="dock_move_left">Move left</string>
+    <string name="dock_move_right">Move right</string>
+    <string name="dock_remove">Remove from dock</string>
+    <string name="dock_add">Add to dock</string>
+    <string name="dock_replace">Replace %1$s</string>
+    <string name="app_info">App info</string>
 </resources>

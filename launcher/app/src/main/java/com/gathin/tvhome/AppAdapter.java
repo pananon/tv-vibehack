@@ -1,6 +1,5 @@
 package com.gathin.tvhome;
 
-import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -12,8 +11,6 @@ import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
-import android.net.Uri;
-import android.provider.Settings;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -45,6 +42,12 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
 
         /** Called for D-pad Up/Down on a tile. Return true when handled. */
         boolean onTileVerticalKey(int position, int keyCode);
+
+        /** D-pad Right on a tile. Return true to stop focus moving (e.g. into an empty dock slot). */
+        boolean onTileRightKey(int position);
+
+        /** Menu key or long-press OK on a tile: dock editing and app info. */
+        void onTileMenu(int position, View card);
     }
 
     static final class Entry {
@@ -58,9 +61,22 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         Entry(String label, ComponentName component, Drawable banner, Drawable icon) {
             this.label = label;
             this.component = component;
-            this.pkg = component.getPackageName();
+            this.pkg = component == null ? null : component.getPackageName();
             this.banner = banner;
             this.icon = icon;
+        }
+
+        /** An empty dock slot: shown as an outline so a short dock doesn't pull grid apps into it. */
+        static Entry emptySlot() {
+            return new Entry("", null, null, null);
+        }
+
+        boolean isEmptySlot() {
+            return component == null;
+        }
+
+        String key() {
+            return component == null ? null : component.flattenToShortString();
         }
     }
 
@@ -69,8 +85,8 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     private final Context ctx;
     private final TileListener listener;
     private final int dockSize;
-    /** Dock order (res/values/config.xml, dock_apps). */
-    private final List<String> favourites;
+    /** Dock order: edited on the TV and saved in DockPrefs; config.xml (dock_apps) is the default. */
+    private List<String> favourites;
     /** Never shown as tiles (res/values/config.xml, hidden_apps). */
     private final Set<String> hidden;
     private final List<Entry> items = new ArrayList<>();
@@ -79,7 +95,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         this.ctx = ctx;
         this.listener = listener;
         this.dockSize = dockSize;
-        this.favourites = Arrays.asList(ctx.getResources().getStringArray(R.array.dock_apps));
+        this.favourites = DockPrefs.load(ctx);
         this.hidden = new HashSet<>(Arrays.asList(ctx.getResources().getStringArray(R.array.hidden_apps)));
         // Tiles keep their identity across reload(), so a focused tile stays on its app instead of
         // its view being rebound to whatever app now sits in that slot.
@@ -87,6 +103,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     }
 
     void reload() {
+        favourites = DockPrefs.load(ctx);
         PackageManager pm = ctx.getPackageManager();
         Intent probe = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
         List<ResolveInfo> found = pm.queryIntentActivities(probe, 0);
@@ -110,6 +127,12 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             }
             return a.label.compareToIgnoreCase(b.label);
         });
+        // Fill the rest of the dock row with empty slots, so the grid starts on the second row.
+        int docked = 0;
+        while (docked < fresh.size() && favourites.contains(fresh.get(docked).pkg)) docked++;
+        if (docked < dockSize && fresh.size() > docked) {
+            for (int i = docked; i < dockSize; i++) fresh.add(i, Entry.emptySlot());
+        }
         items.clear();
         items.addAll(fresh);
         notifyDataSetChanged();
@@ -125,13 +148,23 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     @Override
     public void onBindViewHolder(@NonNull Holder h, int position) {
         Entry e = items.get(position);
+        boolean empty = e.isEmptySlot();
+        h.card.setFocusable(!empty);
+        h.card.setClickable(!empty);
+        h.card.setLongClickable(!empty);
+        h.card.setBackgroundResource(empty ? R.drawable.tile_empty : R.drawable.tile_bg);
         h.name.setText(e.label);
         h.name.setVisibility(position < dockSize ? View.INVISIBLE : View.VISIBLE);   // the dock has no labels
         boolean focused = h.card.isFocused();   // a rebind after reload() can hit the focused tile
         h.name.setAlpha(focused ? 1f : 0f);
         h.card.setScaleX(focused ? FOCUS_SCALE : 1f);
         h.card.setScaleY(focused ? FOCUS_SCALE : 1f);
-        if (e.banner != null) {
+        if (empty) {
+            h.banner.setImageDrawable(null);
+            h.banner.setVisibility(View.GONE);
+            h.icon.setVisibility(View.GONE);
+            h.label.setVisibility(View.GONE);
+        } else if (e.banner != null) {
             h.banner.setImageDrawable(e.banner);
             h.banner.setVisibility(View.VISIBLE);
             h.icon.setVisibility(View.GONE);
@@ -144,16 +177,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             h.label.setText(e.label);
             h.label.setVisibility(View.VISIBLE);
         }
-        h.card.setOnClickListener(v -> launch(e));
-        h.card.setOnLongClickListener(v -> {
-            Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + e.pkg));
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            try {
-                ctx.startActivity(i);
-            } catch (ActivityNotFoundException ignored) {
-            }
-            return true;
-        });
+        h.card.setOnClickListener(empty ? null : v -> launch(e));
     }
 
     private void launch(Entry e) {
@@ -175,21 +199,47 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
 
     @Override
     public long getItemId(int position) {
-        return items.get(position).component.flattenToShortString().hashCode();
+        Entry e = items.get(position);
+        return e.isEmptySlot() ? -1 - position : e.key().hashCode();
+    }
+
+    boolean isEmptySlot(int position) {
+        return position >= 0 && position < items.size() && items.get(position).isEmptySlot();
     }
 
     /** Stable key for the app at a position (its component), or null. */
     String keyAt(int position) {
-        return position >= 0 && position < items.size() ? items.get(position).component.flattenToShortString() : null;
+        return position >= 0 && position < items.size() ? items.get(position).key() : null;
     }
 
     /** Position of the app with this key, or -1 when it is gone. */
     int positionOf(String key) {
         if (key == null) return -1;
         for (int i = 0; i < items.size(); i++) {
-            if (items.get(i).component.flattenToShortString().equals(key)) return i;
+            if (key.equals(items.get(i).key())) return i;
         }
         return -1;
+    }
+
+    String pkgAt(int position) {
+        return position >= 0 && position < items.size() ? items.get(position).pkg : null;
+    }
+
+    /** The installed dock apps, in dock order (the start of the first row). */
+    List<String> dockApps() {
+        List<String> out = new ArrayList<>();
+        for (int i = 0; i < Math.min(dockSize, items.size()); i++) {
+            if (favourites.contains(items.get(i).pkg)) out.add(items.get(i).pkg);
+        }
+        return out;
+    }
+
+    /** Label of an installed app by package, or the package name. */
+    String labelOf(String pkg) {
+        for (Entry e : items) {
+            if (pkg.equals(e.pkg)) return e.label;
+        }
+        return pkg;
     }
 
     String labelAt(int position) {
@@ -271,8 +321,23 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             });
             card.setClipToOutline(true);
 
+            card.setOnLongClickListener(view -> {
+                int pos = getBindingAdapterPosition();
+                if (listener != null && pos != RecyclerView.NO_POSITION) listener.onTileMenu(pos, view);
+                return true;
+            });
+
             card.setOnKeyListener((view, keyCode, event) -> {
                 if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+                if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    int pos = getBindingAdapterPosition();
+                    return listener != null && pos != RecyclerView.NO_POSITION && listener.onTileRightKey(pos);
+                }
+                if (keyCode == KeyEvent.KEYCODE_MENU) {
+                    int pos = getBindingAdapterPosition();
+                    if (listener != null && pos != RecyclerView.NO_POSITION) listener.onTileMenu(pos, view);
+                    return true;
+                }
                 if (keyCode != KeyEvent.KEYCODE_DPAD_UP && keyCode != KeyEvent.KEYCODE_DPAD_DOWN) return false;
                 int pos = getBindingAdapterPosition();
                 return listener != null && pos != RecyclerView.NO_POSITION && listener.onTileVerticalKey(pos, keyCode);
