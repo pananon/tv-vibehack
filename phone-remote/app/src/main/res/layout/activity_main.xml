@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- connection -->
+        <LinearLayout style="@style/Row" android:gravity="center_vertical" android:layout_marginBottom="8dp">
+            <View android:id="@+id/dot" android:layout_width="10dp" android:layout_height="10dp"
+                android:layout_marginStart="4dp" android:background="@drawable/dot" />
+            <TextView android:id="@+id/status" android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:layout_marginStart="8dp" android:textColor="@color/dim"
+                android:textSize="13sp" android:text="Not connected" />
+        </LinearLayout>
+        <LinearLayout style="@style/Row">
+            <EditText android:id="@+id/host" android:layout_width="0dp" android:layout_height="48dp"
+                android:layout_weight="1" android:layout_margin="4dp" android:paddingHorizontal="12dp"
+                android:background="@drawable/bg_field" android:textColor="@color/fg" android:textColorHint="@color/dim"
+                android:hint="TV IP address" android:inputType="text" android:singleLine="true" android:imeOptions="actionGo" />
+            <Button android:id="@+id/connect" style="@style/Btn" android:layout_width="88dp" android:layout_height="48dp"
+                android:layout_weight="0" android:background="@drawable/bg_accent" android:text="Connect" />
+            <Button android:id="@+id/find" style="@style/Btn" android:layout_width="64dp" android:layout_height="48dp"
+                android:layout_weight="0" android:text="Find" />
+        </LinearLayout>
+
+        <!-- power and top buttons -->
+        <LinearLayout style="@style/Row" android:layout_marginTop="10dp">
+            <Button android:id="@+id/power" style="@style/Btn" android:background="@drawable/bg_red" android:text="Power" />
+            <Button android:id="@+id/input" style="@style/Btn" android:text="Input" />
+            <Button android:id="@+id/settings" style="@style/Btn" android:text="Settings" />
+            <Button android:id="@+id/ambient" style="@style/Btn" android:text="Ambient" />
+        </LinearLayout>
+
+        <!-- D-pad -->
+        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal" android:layout_marginTop="12dp" android:padding="10dp"
+            android:background="@drawable/bg_panel" android:orientation="vertical">
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center_horizontal">
+                <Button android:id="@+id/up" style="@style/Pad" android:text="▲" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content">
+                <Button android:id="@+id/left" style="@style/Pad" android:text="◀" />
+                <Button android:id="@+id/ok" style="@style/Pad" android:background="@drawable/bg_accent" android:text="OK" android:textSize="18sp" />
+                <Button android:id="@+id/right" style="@style/Pad" android:text="▶" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center_horizontal">
+                <Button android:id="@+id/down" style="@style/Pad" android:text="▼" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout style="@style/Row" android:layout_marginTop="10dp">
+            <Button android:id="@+id/back" style="@style/Btn" android:text="Back" />
+            <Button android:id="@+id/home" style="@style/Btn" android:text="Home" />
+            <Button android:id="@+id/menu" style="@style/Btn" android:text="Menu" />
+        </LinearLayout>
+        <LinearLayout style="@style/Row">
+            <Button android:id="@+id/rew" style="@style/Btn" android:text="◀◀" />
+            <Button android:id="@+id/play" style="@style/Btn" android:text="▶ ❚❚" />
+            <Button android:id="@+id/ff" style="@style/Btn" android:text="▶▶" />
+        </LinearLayout>
+        <LinearLayout style="@style/Row">
+            <Button android:id="@+id/voldown" style="@style/Btn" android:text="Vol −" />
+            <Button android:id="@+id/mute" style="@style/Btn" android:text="Mute" />
+            <Button android:id="@+id/volup" style="@style/Btn" android:text="Vol +" />
+        </LinearLayout>
+
+        <!-- typing -->
+        <TextView style="@style/Caption" android:text="Type on TV or send a link" />
+        <LinearLayout style="@style/Row">
+            <EditText android:id="@+id/text" android:layout_width="0dp" android:layout_height="48dp"
+                android:layout_weight="1" android:layout_margin="4dp" android:paddingHorizontal="12dp"
+                android:background="@drawable/bg_field" android:textColor="@color/fg" android:textColorHint="@color/dim"
+                android:hint="Text or link" android:inputType="text" android:singleLine="true" android:imeOptions="actionSend" />
+            <Button android:id="@+id/mic" style="@style/Btn" android:layout_width="52dp" android:layout_height="48dp"
+                android:layout_weight="0" android:text="Mic" />
+            <Button android:id="@+id/send" style="@style/Btn" android:layout_width="68dp" android:layout_height="48dp"
+                android:layout_weight="0" android:background="@drawable/bg_accent" android:text="Send" />
+        </LinearLayout>
+
+        <!-- sleep timer -->
+        <LinearLayout style="@style/Row" android:gravity="center_vertical">
+            <TextView style="@style/Caption" android:text="Sleep timer" />
+            <TextView android:id="@+id/sleepStatus" android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:layout_marginTop="18dp" android:gravity="end" android:layout_marginEnd="4dp"
+                android:textColor="@color/fg" android:textSize="13sp" android:text="Off" />
+        </LinearLayout>
+        <LinearLayout style="@style/Row">
+            <Button android:id="@+id/sleep30" style="@style/Btn" android:text="30 min" />
+            <Button android:id="@+id/sleep60" style="@style/Btn" android:text="60 min" />
+            <Button android:id="@+id/sleep90" style="@style/Btn" android:text="90 min" />
+            <Button android:id="@+id/sleepOff" style="@style/Btn" android:text="Off" />
+        </LinearLayout>
+
+        <!-- apps, filled from the TV -->
+        <TextView style="@style/Caption" android:text="Apps" />
+        <LinearLayout android:id="@+id/apps" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </LinearLayout>
+</ScrollView>

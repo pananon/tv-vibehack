@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.gathin.tvremote'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.gathin.tvremote'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        resources {
+            excludes += ['META-INF/*.kotlin_module', 'META-INF/versions/**']
+        }
+    }
+}
+
+dependencies {
+    // ADB client (mobile.dev): talks to the TV's network ADB like tools/tv.py does on the PC.
+    // 1.2.9's POM leaks its test libraries (JUnit, GraalVM's junit-platform-native) as runtime
+    // dependencies; they aren't used at runtime and collide when packaged.
+    implementation('dev.mobile:dadb:1.2.9') {
+        exclude group: 'org.junit.platform'
+        exclude group: 'org.junit.jupiter'
+        exclude group: 'org.opentest4j'
+        exclude group: 'org.apiguardian'
+        exclude group: 'org.graalvm.buildtools'
+    }
+}

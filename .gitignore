@@ -13,3 +13,7 @@ backup/
 remote/remote.json
 remote/__pycache__/
 remote/backups/
+phone-remote/.gradle/
+phone-remote/build/
+phone-remote/app/build/
+phone-remote/local.properties
