@@ -7,7 +7,7 @@ Run with:  tools\\venv\\Scripts\\pythonw.exe remote\\remote.pyw
 
 Keyboard (when the text box is not focused):
     arrows = D-pad, Enter = OK, Backspace/Esc = Back, H = Home, +/- = volume, M = mute,
-    Space = play/pause, , and . = rewind / fast-forward
+    Space = play/pause, , and . = rewind / fast-forward, Tab = Tab
 """
 import base64
 import concurrent.futures
@@ -816,6 +816,8 @@ class RemoteApp:
             "Right": "KEYCODE_DPAD_RIGHT", "Return": "KEYCODE_DPAD_CENTER", "BackSpace": "KEYCODE_BACK",
             "Escape": "KEYCODE_BACK", "h": "KEYCODE_HOME", "space": "KEYCODE_MEDIA_PLAY_PAUSE",
             "comma": "KEYCODE_MEDIA_REWIND", "period": "KEYCODE_MEDIA_FAST_FORWARD",
+            # Tab reaches buttons some phone-style apps leave out of D-pad focus (e.g. Ojo's "+").
+            "Tab": "KEYCODE_TAB",
         }
         volume_keys = {"plus": "KEYCODE_VOLUME_UP", "equal": "KEYCODE_VOLUME_UP",
                        "minus": "KEYCODE_VOLUME_DOWN", "m": "KEYCODE_VOLUME_MUTE"}
