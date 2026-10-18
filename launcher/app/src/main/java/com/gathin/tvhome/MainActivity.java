@@ -69,7 +69,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private SpringAnimation springX, springY;
     private float glassTargetX, glassTargetY;
     private boolean glassShown;
-    private int lastFocused = 0;
+    // Static so they survive the activity being destroyed while another app is open (low-memory TVs,
+    // or Developer options → "Don't keep activities"); they only reset when the process dies.
+    private static int lastFocused = 0;
+    /** App of the last focused tile, so focus follows it when the app list changes. */
+    private static String lastFocusedKey;
     private float density;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -174,17 +178,20 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         heroShown = false;
         heroName.setAlpha(0f);
         ambient.setAlpha(0f);
+        // Read these before reload(): rebinding can move focus to the first tile and overwrite them.
+        final String returnKey = lastFocusedKey;
+        final int returnSlot = lastFocused;
         adapter.reload();
         grid.scheduleLayoutAnimation();
         updateGreeting();
         updateWifiLabel();
         handler.postDelayed(minuteTick, MINUTE_MS);
 
-        // Return to the tile we left from, or the first one.
+        // Return to the app we left from, or the same slot if that app is gone. Always refocus: after
+        // reload() the view that holds focus may no longer show the app it had.
         grid.post(() -> {
-            View focused = getCurrentFocus();
-            if (focused != null && grid.findContainingViewHolder(focused) != null) return;
-            focusTile(lastFocused);
+            int pos = adapter.positionOf(returnKey);
+            focusTile(pos >= 0 ? pos : returnSlot);
         });
     }
 
@@ -204,6 +211,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     public void onTileFocused(int position, View card) {
         lastFocused = position;
+        lastFocusedKey = adapter.keyAt(position);
         // Tile rect in root coordinates, using layout positions (ignores the scale animation).
         Rect r = new Rect(0, 0, card.getWidth(), card.getHeight());
         root.offsetDescendantRectToMyCoords(card, r);
@@ -324,7 +332,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         final int pos = Math.max(0, Math.min(position, adapter.getItemCount() - 1));
         RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(pos);
         if (vh != null) {
-            vh.itemView.findViewById(R.id.card).requestFocus();
+            View card = vh.itemView.findViewById(R.id.card);
+            // Already focused (e.g. back from an app): no focus change fires, so restore the glass by hand.
+            if (card.isFocused()) onTileFocused(pos, card);
+            else card.requestFocus();
             return;
         }
         // Not laid out yet: scroll there, then focus once the scroll settles.

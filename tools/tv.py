@@ -55,7 +55,9 @@ def main():
         dev.pull(args[1], args[2])
         print(f"pulled {args[1]} -> {args[2]}")
     elif args[0] == "--batch":
-        # one shell command per stdin line, each run separately on the same connection
+        # one shell command per stdin line, each run separately on the same connection.
+        # utf-8-sig drops the BOM Windows PowerShell may prepend to piped stdin.
+        sys.stdin.reconfigure(encoding="utf-8-sig")
         for line in sys.stdin:
             line = line.strip()
             if not line or line.startswith("#"):
