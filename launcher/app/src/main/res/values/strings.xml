@@ -17,6 +17,8 @@
     <string name="ethernet">Ethernet</string>
     <string name="offline">Offline</string>
     <string name="dream_name">Clock</string>
+    <string name="now_playing">Now playing</string>
+    <string name="ambient_name">Ambient</string>
     <string name="dock_move_left">Move left</string>
     <string name="dock_move_right">Move right</string>
     <string name="dock_remove">Remove from dock</string>

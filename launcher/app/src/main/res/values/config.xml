@@ -23,6 +23,13 @@
     <!-- The TV's Live TV / tuner app, offered at the end of the Inputs menu. Leave empty to omit. -->
     <string name="live_tv_package" translatable="false">com.heytap.tv.livetv</string>
 
+    <!-- Weather next to the clock, from open-meteo.com (free, no account). Leave both empty to turn it
+         off: the launcher then never uses the network. Basti, Uttar Pradesh. -->
+    <string name="weather_latitude" translatable="false">26.79</string>
+    <string name="weather_longitude" translatable="false">82.72</string>
+    <!-- celsius or fahrenheit -->
+    <string name="weather_unit" translatable="false">celsius</string>
+
     <!-- Tiles per row in the grid; the dock always has this many slots. -->
     <integer name="columns">4</integer>
 </resources>

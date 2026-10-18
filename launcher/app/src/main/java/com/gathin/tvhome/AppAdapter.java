@@ -111,7 +111,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         for (ResolveInfo ri : found) {
             if (ri.activityInfo == null) continue;
             String pkg = ri.activityInfo.packageName;
-            if (pkg.equals(ctx.getPackageName()) || hidden.contains(pkg)) continue;
+            if (hidden.contains(pkg)) continue;   // our own Ambient tile is included on purpose
             Drawable banner = ri.activityInfo.loadBanner(pm);
             if (banner == null) banner = ri.activityInfo.applicationInfo.loadBanner(pm);
             Drawable icon = ri.loadIcon(pm);

@@ -70,6 +70,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private int ambientTarget;
     private TextView greeting;
     private TextView btnWifi;
+    private View weatherBox;
+    private ImageView weatherIcon;
+    private TextView weatherTemp;
+    private boolean weatherLoading;
     private SpringAnimation springX, springY;
     private float glassTargetX, glassTargetY;
     private boolean glassShown;
@@ -86,6 +90,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         public void run() {
             updateGreeting();
             updateWifiLabel();
+            updateWeather();
             handler.postDelayed(this, MINUTE_MS);
         }
     };
@@ -110,6 +115,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 ambientGlow.setGradientRadius((r - l) * 0.62f));
         greeting = findViewById(R.id.greeting);
         btnWifi = findViewById(R.id.btnWifi);
+        weatherBox = findViewById(R.id.weather);
+        weatherIcon = findViewById(R.id.weatherIcon);
+        weatherTemp = findViewById(R.id.weatherTemp);
 
         grid = findViewById(R.id.grid);
         grid.setLayoutManager(new GridLayoutManager(this, COLUMNS));
@@ -190,6 +198,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         grid.scheduleLayoutAnimation();
         updateGreeting();
         updateWifiLabel();
+        updateWeather();
         handler.postDelayed(minuteTick, MINUTE_MS);
 
         // Return to the app we left from, or the same slot if that app is gone. Always refocus: after
@@ -428,6 +437,43 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         } catch (Exception ignored) {
         }
         btnWifi.setText(text);
+    }
+
+    /** Shows the last reading, and fetches a new one in the background when it is due. */
+    private void updateWeather() {
+        String lat = getString(R.string.weather_latitude).trim();
+        String lon = getString(R.string.weather_longitude).trim();
+        if (lat.isEmpty() || lon.isEmpty()) return;   // turned off in config.xml
+        Weather now = Weather.cached(this);
+        showWeather(now);
+        if ((now != null && System.currentTimeMillis() - now.time < Weather.REFRESH_MS) || weatherLoading) return;
+        weatherLoading = true;
+        String unit = getString(R.string.weather_unit).trim();
+        new Thread(() -> {
+            Weather fresh = null;
+            try {
+                fresh = Weather.fetch(lat, lon, unit);
+            } catch (Exception ignored) {   // offline or service down: keep the last reading
+            }
+            final Weather result = fresh;
+            handler.post(() -> {
+                weatherLoading = false;
+                if (result != null) {
+                    result.save(this);
+                    showWeather(result);
+                }
+            });
+        }, "weather").start();
+    }
+
+    private void showWeather(Weather w) {
+        if (w == null || System.currentTimeMillis() - w.time > Weather.STALE_MS) {
+            weatherBox.setVisibility(View.GONE);
+            return;
+        }
+        weatherIcon.setImageResource(w.icon());
+        weatherTemp.setText(w.label());
+        weatherBox.setVisibility(View.VISIBLE);
     }
 
     private void open(Intent i) {

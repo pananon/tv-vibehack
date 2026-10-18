@@ -61,5 +61,67 @@
             android:fontVariationSettings="'wght' 400"
             android:letterSpacing="0.14"
             android:textAllCaps="true" />
+
+        <!-- Now playing: shown while music plays, drifts with the clock. -->
+        <LinearLayout
+            android:id="@+id/nowPlaying"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:layout_marginTop="28dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/nowPlayingArt"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:scaleType="centerCrop"
+                android:contentDescription="@null" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/now_playing"
+                    android:textColor="#80FFFFFF"
+                    android:textSize="11sp"
+                    android:fontFamily="@font/outfit"
+                    android:fontVariationSettings="'wght' 500"
+                    android:letterSpacing="0.2"
+                    android:textAllCaps="true" />
+
+                <TextView
+                    android:id="@+id/nowPlayingTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:maxWidth="420dp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:textColor="#E6FFFFFF"
+                    android:textSize="20sp"
+                    android:fontFamily="@font/outfit"
+                    android:fontVariationSettings="'wght' 400" />
+
+                <TextView
+                    android:id="@+id/nowPlayingArtist"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:maxWidth="420dp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:textColor="#99FFFFFF"
+                    android:textSize="15sp"
+                    android:fontFamily="@font/outfit"
+                    android:fontVariationSettings="'wght' 400" />
+            </LinearLayout>
+        </LinearLayout>
     </LinearLayout>
 </FrameLayout>

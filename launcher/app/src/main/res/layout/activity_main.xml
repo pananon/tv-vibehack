@@ -116,6 +116,37 @@
                         android:fontVariationSettings="'wght' 400"
                         android:letterSpacing="0.14"
                         android:textAllCaps="true" />
+
+                    <!-- Current weather (config.xml weather_latitude/longitude); hidden until known. -->
+                    <LinearLayout
+                        android:id="@+id/weather"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="bottom"
+                        android:layout_marginStart="18dp"
+                        android:layout_marginBottom="15dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:visibility="gone">
+
+                        <ImageView
+                            android:id="@+id/weatherIcon"
+                            android:layout_width="20dp"
+                            android:layout_height="20dp"
+                            android:alpha="0.75"
+                            android:contentDescription="@null" />
+
+                        <TextView
+                            android:id="@+id/weatherTemp"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="6dp"
+                            android:textColor="#A6FFFFFF"
+                            android:textSize="15sp"
+                            android:fontFamily="@font/outfit"
+                            android:fontVariationSettings="'wght' 400"
+                            android:letterSpacing="0.04" />
+                    </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
 
