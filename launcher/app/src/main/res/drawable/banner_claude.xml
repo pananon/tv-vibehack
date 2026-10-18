@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Banner for the Claude on TV tile. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <size android:width="320dp" android:height="180dp" />
+            <gradient android:type="linear" android:angle="315"
+                android:startColor="#FF3A1E14" android:centerColor="#FFB4553A" android:endColor="#FFE38B62" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/ic_chat" android:gravity="center"
+        android:width="96dp" android:height="96dp" />
+</layer-list>

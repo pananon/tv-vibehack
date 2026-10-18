@@ -16,7 +16,9 @@
         android:icon="@mipmap/ic_launcher"
         android:banner="@drawable/banner"
         android:theme="@style/Theme.TvHome"
-        android:allowBackup="false">
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true">
+        <!-- Cleartext: Claude on TV talks to the PC over plain HTTP on the home network. -->
 
         <activity
             android:name=".MainActivity"
@@ -61,6 +63,24 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </service>
+
+        <!-- Claude on TV: the live Claude Code chat from the PC (TV Remote starts it with the bridge's
+             address and key). Its own task, like Ambient. -->
+        <activity
+            android:name=".ClaudeActivity"
+            android:taskAffinity="com.gathin.tvhome.claude"
+            android:label="@string/claude_name"
+            android:banner="@drawable/banner_claude"
+            android:icon="@drawable/ic_chat"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
 
         <!-- Lets the screensaver see what is playing (media sessions); ignores notifications. -->
         <service

@@ -19,6 +19,12 @@
     <string name="dream_name">Clock</string>
     <string name="now_playing">Now playing</string>
     <string name="ambient_name">Ambient</string>
+    <string name="claude_name">Claude</string>
+    <string name="claude_hint">▲▼ Scroll  ·  OK Latest  ·  Back Close  ·  Reply on the PC</string>
+    <string name="claude_waiting">Waiting for you</string>
+    <string name="claude_working">Working…</string>
+    <string name="claude_offline">PC not reachable: turn on Claude on TV in TV Remote</string>
+    <string name="claude_not_set_up">Open Claude on TV from TV Remote on the PC once to connect</string>
     <string name="dock_move_left">Move left</string>
     <string name="dock_move_right">Move right</string>
     <string name="dock_remove">Remove from dock</string>

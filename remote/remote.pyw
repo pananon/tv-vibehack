@@ -68,6 +68,7 @@ from adb_shell.adb_device import AdbDeviceTcp  # noqa: E402
 
 sys.path.insert(0, HERE)
 import maintenance  # noqa: E402
+import claude_tv  # noqa: E402
 
 BACKUP_ROOT = os.path.join(HERE, "backups")
 DEFAULT_DEBLOAT = os.path.join(os.path.dirname(HERE), "examples", "oneplus-tv-dubai", "debloat.txt")
@@ -434,6 +435,7 @@ class RemoteApp:
         self.monitor = Monitor(post(self._show_frame), post(self._set_info))
         self.last_cleanup_result = None
         self.maint_window = None
+        self.bridge = claude_tv.Bridge()
         self._build()
         self._bind_keys()
         self._drain()
@@ -694,8 +696,13 @@ class RemoteApp:
         # Paste: sends whatever is on this PC's clipboard (a link opens in its TV app).
         Button(row, "Paste", self._send_clipboard, w=48, h=34, font=SMALL).pack(side="left", padx=(4, 0))
 
+        # Claude on TV
+        row = self._section("claude", pady=(8, 0), **px)
+        self.claude_btn = Button(row, "Claude on TV", self._toggle_claude, w=234, h=32, font=SMALL)
+        self.claude_btn.pack()
+
         # preview toggle
-        row = self._section("previewbtn", pady=(4, 14), **px)
+        row = self._section("previewbtn", pady=(6, 14), **px)
         self.preview_btn = Button(row, "TV screen", self._toggle_preview, w=72, h=32, font=SMALL)
         self.preview_btn.pack(side="left")
         Button(row, "Ambient", self._ambient, w=66, h=32, font=SMALL).pack(side="left", padx=4)
@@ -705,6 +712,22 @@ class RemoteApp:
         self._layout()
 
     # ---- ambient, maintenance -----------------------------------------------------------------
+
+    def _toggle_claude(self):
+        """Serves the live Claude Code chat to the TV (view only) and opens it there."""
+        if self.bridge.running:
+            self.bridge.stop()
+            self.claude_btn.set_base(BTN)
+            self.claude_btn.config(text="Claude on TV")
+            return
+        try:
+            url, token = self.bridge.start(_local_ipv4(), cfg["host"])
+        except OSError as e:
+            messagebox.showerror("Claude on TV", f"Couldn't start the bridge: {e}", parent=self.root)
+            return
+        self.link.shell(f"am start -n com.gathin.tvhome/.ClaudeActivity --es url {url} --es token {token}")
+        self.claude_btn.set_base(ACCENT)
+        self.claude_btn.config(text="Claude on TV: on (click to stop)")
 
     def _ambient(self):
         self.link.shell("am start -n com.gathin.tvhome/.AmbientActivity")
