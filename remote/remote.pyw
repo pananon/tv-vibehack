@@ -9,6 +9,7 @@ Keyboard (when the text box is not focused):
     arrows = D-pad, Enter = OK, Backspace/Esc = Back, H = Home, +/- = volume, M = mute,
     Space = play/pause, , and . = rewind / fast-forward
 """
+import base64
 import concurrent.futures
 import ipaddress
 import json
@@ -721,13 +722,20 @@ class RemoteApp:
             self.claude_btn.config(text="Claude on TV")
             return
         try:
-            url, token = self.bridge.start(_local_ipv4(), cfg["host"])
+            url, token = self.bridge.start(_local_ipv4(), cfg["host"], on_waiting=self._claude_waiting)
         except OSError as e:
             messagebox.showerror("Claude on TV", f"Couldn't start the bridge: {e}", parent=self.root)
             return
         self.link.shell(f"am start -n com.gathin.tvhome/.ClaudeActivity --es url {url} --es token {token}")
         self.claude_btn.set_base(ACCENT)
         self.claude_btn.config(text="Claude on TV: on (click to stop)")
+
+    def _claude_waiting(self, asking, snippet):
+        """Called from the bridge's watcher: show the "Claude is waiting" card over whatever is on the TV."""
+        title = "Claude has a question for you" if asking else "Claude is waiting for you"
+        b64 = lambda t: base64.b64encode(t.encode("utf-8")).decode("ascii")   # the TV's shell mangles quotes
+        self.link.shell("am broadcast -n com.gathin.tvhome/.ClaudeNoticeReceiver"
+                        f" --es title64 {b64(title)} --es text64 {b64(snippet)}")
 
     def _ambient(self):
         self.link.shell("am start -n com.gathin.tvhome/.AmbientActivity")

@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import threading
+import time
 import urllib.parse
 
 CLAUDE_DIR = os.path.join(os.path.expanduser("~"), ".claude")
@@ -71,6 +72,7 @@ class Feed:
         self.next_id = 1
         self.title = ""
         self.busy = False
+        self.asking = False   # Claude asked you a question and is waiting for the answer
         self.session_id = None
 
     def refresh(self):
@@ -80,7 +82,7 @@ class Feed:
         with self.lock:
             if path != self.path:   # a different session became the newest: start over
                 self.path, self.offset, self.partial = path, 0, b""
-                self.items, self.title, self.busy = [], "", False
+                self.items, self.title, self.busy, self.asking = [], "", False, False
                 self.session_id = os.path.splitext(os.path.basename(path))[0]
             try:
                 with open(path, "rb") as f:
@@ -99,6 +101,7 @@ class Feed:
             del self.items[:-KEEP]
 
     def _item(self, role, text):
+        self.asking = False
         self.items.append({"id": self.next_id, "role": role, "text": text})
         self.next_id += 1
 
@@ -127,18 +130,29 @@ class Feed:
                     self._item("assistant", b["text"].strip())
                 elif b.get("type") == "tool_use":
                     self._item("tool", _tool_line(b))
+                    if b.get("name") == "AskUserQuestion":
+                        self.asking = True
             stop = msg.get("stop_reason")
             if stop == "end_turn":
                 self.busy = False
             elif stop == "tool_use":
                 self.busy = True
 
+    def waiting(self):
+        """(waiting, asking, last reply snippet) for the "Claude is waiting" card."""
+        with self.lock:
+            last = next((i["text"] for i in reversed(self.items) if i["role"] == "assistant"), "")
+            snippet = " ".join(re.sub(r"[*`#>|]", "", last).split())
+            if len(snippet) > 150:
+                snippet = snippet[:147] + "…"
+            return (not self.busy) or self.asking, self.asking, snippet
+
     def since(self, last_id):
         with self.lock:
             pid, name = session_process(self.session_id) if self.session_id else (None, "")
             return {
                 "title": self.title or name or "Claude",
-                "busy": self.busy,
+                "busy": self.busy and not self.asking,
                 "connected": pid is not None,
                 "items": [i for i in self.items if i["id"] > last_id][-200:],
             }
@@ -154,12 +168,14 @@ class Bridge:
         self.token = None
         self.allowed_ip = None
         self.url = None
+        self._watching = False
 
     @property
     def running(self):
         return self.server is not None
 
-    def start(self, lan_ip, tv_ip):
+    def start(self, lan_ip, tv_ip, on_waiting=None):
+        """on_waiting(asking, snippet) is called when the chat goes from working to waiting."""
         self.stop()
         self.token = secrets.token_urlsafe(18)
         self.allowed_ip = tv_ip
@@ -197,10 +213,27 @@ class Bridge:
         self.server = http.server.ThreadingHTTPServer((lan_ip, PORT), Handler)
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        if on_waiting is not None:
+            self._watching = True
+            threading.Thread(target=self._watch, args=(on_waiting,), daemon=True).start()
         self.url = f"http://{lan_ip}:{PORT}"
         return self.url, self.token
 
+    def _watch(self, on_waiting):
+        was_waiting = None
+        while self._watching:
+            try:
+                self.feed.refresh()
+                waiting, asking, snippet = self.feed.waiting()
+                if was_waiting is False and waiting:
+                    on_waiting(asking, snippet)
+                was_waiting = waiting
+            except Exception:
+                pass
+            time.sleep(3)
+
     def stop(self):
+        self._watching = False
         if self.server is not None:
             self.server.shutdown()
             self.server.server_close()

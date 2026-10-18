@@ -37,6 +37,8 @@ import java.util.List;
 public class ClaudeActivity extends Activity {
 
     private static final long POLL_MS = 1500;
+    /** True while this screen is in front: the "Claude is waiting" card is skipped then. */
+    static boolean visible;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<String[]> items = new ArrayList<>();   // {role, text}
@@ -96,6 +98,7 @@ public class ClaudeActivity extends Activity {
     protected void onResume() {
         super.onResume();
         resumed = true;
+        visible = true;
         handler.post(poll);
     }
 
@@ -103,6 +106,7 @@ public class ClaudeActivity extends Activity {
     protected void onPause() {
         super.onPause();
         resumed = false;
+        visible = false;
         handler.removeCallbacks(poll);
     }
 
