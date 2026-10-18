@@ -66,6 +66,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private GradientDrawable ambientGlow;
     private int ambientColor;
     private boolean heroShown;
+    private boolean ambientShown;
+    private int ambientTarget;
     private TextView greeting;
     private TextView btnWifi;
     private SpringAnimation springX, springY;
@@ -179,6 +181,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         glass.setAlpha(0f);
         heroShown = false;
         heroName.setAlpha(0f);
+        ambientShown = false;
         ambient.setAlpha(0f);
         // Read these before reload(): rebinding can move focus to the first tile and overwrite them.
         final String returnKey = lastFocusedKey;
@@ -252,6 +255,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             showHero(position, r.top - dy);
         } else {
             hideHero();
+            showAmbient(adapter.ambientColorAt(position));
             // Scroll just enough so the whole glass (not only the tile) is visible.
             Rect want = new Rect(0, -(int) pad * 2, item.getWidth(), item.getHeight() + (int) pad);
             grid.requestChildRectangleOnScreen(item, want, false);
@@ -262,17 +266,15 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     private void showHero(int position, float dockTopInRoot) {
         String label = adapter.labelAt(position);
-        int color = adapter.ambientColorAt(position);
         float y = dockTopInRoot - 14 * density - 26 * density - heroName.getHeight();
         boolean changed = !label.contentEquals(heroName.getText());
+        showAmbient(adapter.ambientColorAt(position));
 
         if (!heroShown) {
             heroName.setText(label);
             heroName.setY(y);
             heroName.setTranslationX(0f);
             heroName.animate().alpha(1f).setDuration(260).start();
-            setAmbient(color);
-            ambient.animate().alpha(1f).setDuration(600).start();
             heroShown = true;
         } else if (changed) {
             heroName.animate().alpha(0f).translationX(-12 * density).setDuration(120).withEndAction(() -> {
@@ -281,14 +283,26 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 heroName.setTranslationX(12 * density);
                 heroName.animate().alpha(1f).translationX(0f).setDuration(200).start();
             }).start();
-            if (color != ambientColor) {
-                ambient.animate().alpha(0.35f).setDuration(200).withEndAction(() -> {
-                    setAmbient(color);
-                    ambient.animate().alpha(1f).setDuration(500).start();
-                }).start();
-            }
         } else {
             heroName.setY(y);
+        }
+    }
+
+    /** The glow behind everything, in the focused app's colour: dock and grid apps alike. */
+    private void showAmbient(int color) {
+        ambientTarget = color;
+        if (!ambientShown) {
+            ambient.animate().cancel();
+            setAmbient(color);
+            ambient.animate().alpha(1f).setDuration(600).start();
+            ambientShown = true;
+        } else if (color != ambientColor) {
+            // Dip, recolour, rise. The end action reads ambientTarget, so a quick run of focus
+            // changes settles on the last app instead of one passed on the way.
+            ambient.animate().alpha(0.35f).setDuration(200).withEndAction(() -> {
+                setAmbient(ambientTarget);
+                ambient.animate().alpha(1f).setDuration(500).start();
+            }).start();
         }
     }
 
@@ -298,11 +312,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         ambientGlow.setColors(new int[]{0x5C000000 | c, 0x26000000 | c, 0x00000000 | c});
     }
 
+    /** Hides the dock app's name; the glow stays and follows focus into the grid. */
     private void hideHero() {
         if (!heroShown) return;
         heroShown = false;
         heroName.animate().alpha(0f).setDuration(160).start();
-        ambient.animate().alpha(0f).setDuration(300).start();
     }
 
     private void hideGlass() {

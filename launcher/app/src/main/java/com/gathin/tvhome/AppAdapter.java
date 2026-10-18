@@ -246,53 +246,97 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         return position >= 0 && position < items.size() ? items.get(position).label : "";
     }
 
-    /** A vivid colour sampled from the app's banner (or icon), cached per entry. */
+    /** The colour the app's banner (or icon) reads as, for the ambient glow. Cached per entry. */
     int ambientColorAt(int position) {
-        if (position < 0 || position >= items.size()) return 0xFF444444;
+        if (position < 0 || position >= items.size()) return NEUTRAL_GLOW;
         Entry e = items.get(position);
-        if (e.ambient == 0) e.ambient = vividColor(e.banner != null ? e.banner : e.icon);
+        if (e.ambient == 0) e.ambient = glowColor(e.banner != null ? e.banner : e.icon);
         return e.ambient;
     }
 
-    private static int vividColor(Drawable live) {
-        if (live == null) return 0xFF444444;
+    private static final int NEUTRAL_GLOW = 0xFF8A8A8A;
+    private static final int HUE_BUCKETS = 12;   // 30 degrees each
+
+    /**
+     * Works out a glow colour from any banner, so new apps get one automatically. Colourful pixels
+     * are grouped by hue, then:
+     * - one hue clearly dominates them (Netflix red, FanCode orange, Xstream red): that hue;
+     * - the banner is colourful all over (a gradient, a full-colour banner): its strongest hue;
+     * - otherwise the colour is small or mixed on a neutral banner (Play Store's logo on white):
+     *   the banner's overall tone, so a white banner glows white instead of one logo colour.
+     */
+    static int glowColor(Drawable live) {
+        if (live == null) return NEUTRAL_GLOW;
         // Draw a private copy: changing the bounds of the drawable an ImageView shows would blank the tile.
         Drawable d = live.getConstantState() != null ? live.getConstantState().newDrawable().mutate() : live;
         Rect saved = new Rect(d.getBounds());
-        int n = 12;
+        int n = 24;
         Bitmap bmp = Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888);
-        Canvas c = new Canvas(bmp);
         d.setBounds(0, 0, n, n);
-        d.draw(c);
+        d.draw(new Canvas(bmp));
         d.setBounds(saved);
+
         float[] hsv = new float[3];
-        int best = 0xFF444444;
-        float bestScore = -1f;
+        float[] weight = new float[HUE_BUCKETS];
+        long[] sumR = new long[HUE_BUCKETS], sumG = new long[HUE_BUCKETS], sumB = new long[HUE_BUCKETS];
+        int[] count = new int[HUE_BUCKETS];
         long r = 0, g = 0, b = 0;
+        int opaque = 0, colourful = 0;
         for (int y = 0; y < n; y++) {
             for (int x = 0; x < n; x++) {
-                int p = bmp.getPixel(x, y);
-                r += Color.red(p);
-                g += Color.green(p);
-                b += Color.blue(p);
-                Color.colorToHSV(p, hsv);
-                float score = hsv[1] * Math.min(1f, hsv[2] * 1.4f);   // saturated and not too dark
-                if (score > bestScore) {
-                    bestScore = score;
-                    best = p;
-                }
+                int px = bmp.getPixel(x, y);
+                if (Color.alpha(px) < 128) continue;   // transparent parts of an icon
+                opaque++;
+                r += Color.red(px);
+                g += Color.green(px);
+                b += Color.blue(px);
+                Color.colorToHSV(px, hsv);
+                if (hsv[1] < 0.35f || hsv[2] < 0.3f) continue;   // white, grey, black, very dark
+                colourful++;
+                int k = (int) (hsv[0] / (360f / HUE_BUCKETS)) % HUE_BUCKETS;
+                weight[k] += hsv[1] * hsv[2];
+                sumR[k] += Color.red(px);
+                sumG[k] += Color.green(px);
+                sumB[k] += Color.blue(px);
+                count[k]++;
             }
         }
         bmp.recycle();
-        if (bestScore < 0.25f) {   // nearly monochrome banner (e.g. white): use its average, lifted
-            int avg = Color.rgb((int) (r / (n * n)), (int) (g / (n * n)), (int) (b / (n * n)));
-            Color.colorToHSV(avg, hsv);
-            hsv[2] = Math.max(hsv[2], 0.55f);
-            return Color.HSVToColor(hsv);
+        if (opaque == 0) return NEUTRAL_GLOW;
+
+        // Strongest hue: a bucket plus its neighbours, so a hue on a bucket edge isn't split in two.
+        float total = 0f, bestWeight = 0f;
+        int best = 0;
+        for (int k = 0; k < HUE_BUCKETS; k++) {
+            total += weight[k];
+            float w = weight[(k + HUE_BUCKETS - 1) % HUE_BUCKETS] + weight[k] + weight[(k + 1) % HUE_BUCKETS];
+            if (w > bestWeight) {
+                bestWeight = w;
+                best = k;
+            }
         }
-        Color.colorToHSV(best, hsv);
-        hsv[1] = Math.min(1f, hsv[1] * 1.1f);
-        hsv[2] = Math.max(0.5f, hsv[2]);
+        float colourShare = colourful / (float) opaque;
+        float dominance = total > 0f ? bestWeight / total : 0f;
+        boolean useHue = colourShare >= 0.5f || (colourShare >= 0.04f && dominance >= 0.6f);
+
+        if (useHue) {
+            long cr = 0, cg = 0, cb = 0;
+            int c = 0;
+            for (int k = best - 1; k <= best + 1; k++) {
+                int kk = (k + HUE_BUCKETS) % HUE_BUCKETS;
+                cr += sumR[kk];
+                cg += sumG[kk];
+                cb += sumB[kk];
+                c += count[kk];
+            }
+            Color.colorToHSV(Color.rgb((int) (cr / c), (int) (cg / c), (int) (cb / c)), hsv);
+            hsv[1] = Math.min(1f, hsv[1] * 1.1f);
+            hsv[2] = Math.max(0.55f, hsv[2]);
+        } else {
+            Color.colorToHSV(Color.rgb((int) (r / opaque), (int) (g / opaque), (int) (b / opaque)), hsv);
+            hsv[1] *= 0.5f;   // keep a hint of the banner's tint, but read as white/grey
+            hsv[2] = Math.max(0.6f, hsv[2]);
+        }
         return Color.HSVToColor(hsv);
     }
 
