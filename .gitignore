@@ -12,3 +12,4 @@ backup/
 # remote control settings (your TV's IP)
 remote/remote.json
 remote/__pycache__/
+remote/backups/

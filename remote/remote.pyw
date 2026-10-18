@@ -21,6 +21,8 @@ import sys
 import threading
 import time
 import tkinter as tk
+from tkinter import messagebox
+import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(HERE, "remote.json")
@@ -28,6 +30,9 @@ DEFAULT_CONFIG = {
     "host": "192.168.1.21",
     "port": 5555,
     "mac": "",
+    "debloat_list": "",   # empty: examples/oneplus-tv-dubai/debloat.txt
+    "last_backup": 0,
+    "last_cleanup": 0,
     "apps": [
         ["Netflix", "com.netflix.ninja"],
         ["Prime", "com.amazon.amazonvideo.livingroom"],
@@ -60,6 +65,20 @@ os.environ["TV_PORT"] = str(cfg["port"])
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "tools"))
 import tv  # noqa: E402
 from adb_shell.adb_device import AdbDeviceTcp  # noqa: E402
+
+sys.path.insert(0, HERE)
+import maintenance  # noqa: E402
+
+BACKUP_ROOT = os.path.join(HERE, "backups")
+DEFAULT_DEBLOAT = os.path.join(os.path.dirname(HERE), "examples", "oneplus-tv-dubai", "debloat.txt")
+
+
+def debloat_packages():
+    return maintenance.read_debloat_list(cfg.get("debloat_list") or DEFAULT_DEBLOAT)
+
+
+def when(ts):
+    return datetime.datetime.fromtimestamp(ts).strftime("%d %b %Y, %H:%M") if ts else "never"
 
 
 def connect_to(host, timeout=10.0):
@@ -404,6 +423,8 @@ class RemoteApp:
         self.mini = False
         self.pinned = False
         self.frame_img = None
+        self.preview_win = None
+        self.preview_label = None
 
         self.volume_known = False
         # Worker threads must not touch Tk; they post here and the window drains it.
@@ -411,9 +432,12 @@ class RemoteApp:
         post = lambda fn: lambda *a: self.ui_q.put((fn, a))
         self.link = Link(post(self._set_status))
         self.monitor = Monitor(post(self._show_frame), post(self._set_info))
+        self.last_cleanup_result = None
+        self.maint_window = None
         self._build()
         self._bind_keys()
         self._drain()
+        root.after(8000, self._auto_upkeep)   # daily backup, weekly cleanup, once connected
 
     def _drain(self):
         try:
@@ -463,13 +487,13 @@ class RemoteApp:
         self.root.after(2500, self.monitor.poke)   # confirm from the TV
 
     def _show_frame(self, png):
-        if not self.monitor.preview:
+        if not self.monitor.preview or self.preview_label is None:
             return
         try:
             img = tk.PhotoImage(data=png)
         except tk.TclError:
             return
-        factor = max(1, round(img.width() / (256 * SCALE)))
+        factor = max(1, round(img.width() / (384 * SCALE)))
         self.frame_img = img.subsample(factor)
         self.preview_label.config(image=self.frame_img, text="", width=0, height=0)
 
@@ -519,20 +543,37 @@ class RemoteApp:
         self.root.after(600, self.monitor.poke)
 
     def _toggle_preview(self):
+        """The TV screen opens in its own small window beside the remote, so the remote stays short."""
         on = not self.monitor.preview
         self.monitor.preview = on
         self.preview_btn.set_base(ACCENT if on else BTN)
         if on:
-            self.preview_label.config(image=_PIXEL, text="Loading the TV screen…",
-                                      width=int(256 * SCALE), height=int(144 * SCALE))
+            win = self.preview_win = tk.Toplevel(self.root, bg=BG, padx=10, pady=10)
+            win.title("TV screen")
+            win.resizable(False, False)
+            win.attributes("-topmost", self.pinned)
+            win.protocol("WM_DELETE_WINDOW", self._toggle_preview)   # closing it turns the preview off
+            self.preview_label = tk.Label(win, bg=PANEL, fg=DIM, font=SMALL, compound="center", image=_PIXEL,
+                                          text="Loading the TV screen…",
+                                          width=int(384 * SCALE), height=int(216 * SCALE))
+            self.preview_label.pack()
+            tk.Label(win, text="Netflix, Prime and Hotstar show black (copy protection)",
+                     bg=BG, fg=DIM, font=("Segoe UI", 8)).pack(pady=(4, 0))
+            self.root.update_idletasks()
+            win.geometry(f"+{self.root.winfo_rootx() + self.root.winfo_width() + 8}+{self.root.winfo_rooty()}")
             self.monitor.wake.set()
         else:
             self.frame_img = None
-        self._layout()
+            if self.preview_win is not None:
+                self.preview_win.destroy()
+            self.preview_win = None
+            self.preview_label = None
 
     def _toggle_pin(self):
         self.pinned = not self.pinned
         self.root.attributes("-topmost", self.pinned)
+        if self.preview_win is not None:
+            self.preview_win.attributes("-topmost", self.pinned)
         self.pin_btn.set_base(BG, ACCENT if self.pinned else DIM)
 
     def _toggle_mini(self):
@@ -556,8 +597,6 @@ class RemoteApp:
             f.pack_forget()
         for name, f, pack in self.sections:
             if self.mini and name not in mini_keep:
-                continue
-            if name == "preview" and not self.monitor.preview:
                 continue
             f.pack(**pack)
 
@@ -583,13 +622,6 @@ class RemoteApp:
         Button(row, "Settings", lambda: self.link.shell("am start -a android.settings.SETTINGS"),
                w=84).pack(side="right")
         Button(row, "Input", self.k("KEYCODE_TV_INPUT"), w=72).pack(side="right", padx=6)
-
-        # screen preview
-        prev = self._section("preview", pady=(6, 0), **px)
-        self.preview_label = tk.Label(prev, bg=PANEL, fg=DIM, font=SMALL, compound="center")
-        self.preview_label.pack()
-        tk.Label(prev, text="Netflix, Prime and Hotstar show black (copy protection)",
-                 bg=BG, fg=DIM, font=("Segoe UI", 8), wraplength=int(240 * SCALE)).pack(pady=(2, 0))
 
         # D-pad
         holder = self._section("dpad", pady=8, **px)
@@ -658,15 +690,70 @@ class RemoteApp:
         self.entry = tk.Entry(row, bg=BTN, fg=FG, insertbackground=FG, relief="flat", font=FONT, width=16)
         self.entry.pack(side="left", fill="x", expand=True, ipady=6)
         self.entry.bind("<Return>", lambda e: self._send_entry())
-        Button(row, "Send", self._send_entry, w=52, h=34, bg=ACCENT).pack(side="left", padx=(6, 0))
-        Button(sec, "Send clipboard to TV", self._send_clipboard, w=234, h=32, font=SMALL).pack(pady=(6, 0))
+        Button(row, "Send", self._send_entry, w=48, h=34, bg=ACCENT).pack(side="left", padx=(6, 0))
+        # Paste: sends whatever is on this PC's clipboard (a link opens in its TV app).
+        Button(row, "Paste", self._send_clipboard, w=48, h=34, font=SMALL).pack(side="left", padx=(4, 0))
 
         # preview toggle
         row = self._section("previewbtn", pady=(4, 14), **px)
-        self.preview_btn = Button(row, "Show TV screen", self._toggle_preview, w=234, h=32, font=SMALL)
-        self.preview_btn.pack()
+        self.preview_btn = Button(row, "TV screen", self._toggle_preview, w=72, h=32, font=SMALL)
+        self.preview_btn.pack(side="left")
+        Button(row, "Ambient", self._ambient, w=66, h=32, font=SMALL).pack(side="left", padx=4)
+        self.maint_btn = Button(row, "Maintenance", self._open_maintenance, w=104, h=32, font=SMALL)
+        self.maint_btn.pack(side="left")
 
         self._layout()
+
+    # ---- ambient, maintenance -----------------------------------------------------------------
+
+    def _ambient(self):
+        self.link.shell("am start -n com.gathin.tvhome/.AmbientActivity")
+
+    def run_job(self, fn, done, failed=None):
+        """Runs fn(dev) on its own connection and thread; done/failed run on the UI thread."""
+        def work():
+            dev = None
+            try:
+                dev = connect_to(cfg["host"], timeout=20.0)
+                result = fn(dev)
+                self.ui_q.put((done, (result,)))
+            except Exception as e:
+                if failed:
+                    self.ui_q.put((failed, (e,)))
+            finally:
+                if dev is not None:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+        threading.Thread(target=work, daemon=True).start()
+
+    def _auto_upkeep(self):
+        now = time.time()
+        if now - cfg.get("last_backup", 0) > 24 * 3600:
+            self.run_job(lambda d: maintenance.backup(d, BACKUP_ROOT), lambda folder: self._mark("last_backup"))
+        if now - cfg.get("last_cleanup", 0) > 7 * 24 * 3600:
+            self.run_job(lambda d: maintenance.cleanup(d, debloat_packages()), self.cleanup_done)
+
+    def _mark(self, key):
+        cfg[key] = time.time()
+        save_config()
+        if self.maint_window and self.maint_window.alive():
+            self.maint_window.show_dates()
+
+    def cleanup_done(self, result):
+        self._mark("last_cleanup")
+        self.last_cleanup_result = result
+        n = len(result["came_back"])
+        self.maint_btn.config(text=f"Maintenance ({n})" if n else "Maintenance")
+        if self.maint_window and self.maint_window.alive():
+            self.maint_window.show_cleanup(result)
+
+    def _open_maintenance(self):
+        if self.maint_window and self.maint_window.alive():
+            self.maint_window.win.lift()
+        else:
+            self.maint_window = MaintenanceWindow(self)
 
     def _edit_host(self):
         win = tk.Toplevel(self.root, bg=BG, padx=14, pady=12)
@@ -714,6 +801,149 @@ class RemoteApp:
                 return "break"
 
         self.root.bind_all("<Key>", on_key)
+
+
+class MaintenanceWindow:
+    """TV health, cache cleanup and backup/restore, in one small window."""
+
+    MONO = ("Consolas", 9)
+
+    def __init__(self, app):
+        self.app = app
+        w = self.win = tk.Toplevel(app.root, bg=BG, padx=16, pady=12)
+        w.title("TV Maintenance")
+        w.resizable(False, False)
+
+        def caption(text):
+            tk.Label(w, text=text, bg=BG, fg=DIM, font=CAPTION).pack(anchor="w", pady=(10, 2))
+
+        def text(var, font=SMALL, fg=FG):
+            tk.Label(w, textvariable=var, bg=BG, fg=fg, font=font, justify="left", anchor="w").pack(anchor="w", fill="x")
+
+        caption("TV HEALTH")
+        self.health = tk.StringVar(value="Reading the TV…")
+        text(self.health, font=self.MONO)
+        Button(w, "Refresh", self.refresh, w=90, h=28, font=SMALL).pack(anchor="w", pady=(6, 0))
+
+        caption("CLEAN UP")
+        self.clean = tk.StringVar()
+        text(self.clean)
+        row = tk.Frame(w, bg=BG)
+        row.pack(anchor="w", pady=(6, 0))
+        Button(row, "Clean up now", self.clean_now, w=120, h=30, font=SMALL).pack(side="left")
+        self.fix_btn = Button(row, "Disable them again", self.fix, w=150, h=30, font=SMALL, bg=ACCENT)
+
+        caption("BACKUP")
+        self.backup = tk.StringVar()
+        text(self.backup)
+        row = tk.Frame(w, bg=BG)
+        row.pack(anchor="w", pady=(6, 0))
+        Button(row, "Back up now", self.backup_now, w=120, h=30, font=SMALL).pack(side="left", padx=(0, 6))
+        Button(row, "Restore latest…", self.restore_latest, w=150, h=30, font=SMALL).pack(side="left")
+        tk.Label(w, text=f"Saved on this PC in {BACKUP_ROOT}", bg=BG, fg=DIM, font=("Segoe UI", 8),
+                 wraplength=int(330 * SCALE), justify="left").pack(anchor="w", pady=(6, 0))
+
+        self.show_dates()
+        if app.last_cleanup_result:
+            self.show_cleanup(app.last_cleanup_result)
+        self.refresh()
+
+    def alive(self):
+        try:
+            return bool(self.win.winfo_exists())
+        except tk.TclError:
+            return False
+
+    # health
+
+    def refresh(self):
+        self.health.set("Reading the TV…")
+        self.app.run_job(maintenance.health, self.show_health,
+                         lambda e: self.alive() and self.health.set(f"Couldn't read the TV ({e})"))
+
+    def show_health(self, h):
+        if not self.alive():
+            return
+        gb = lambda kb: f"{kb / 1048576:.1f} GB"
+        mb = lambda kb: f"{kb / 1024:.0f} MB"
+        lines = []
+        if "storage" in h:
+            st = h["storage"]
+            lines.append(f"Storage  {gb(st['used_kb'])} used, {gb(st['free_kb'])} free of {gb(st['total_kb'])}")
+        if "memory" in h:
+            m = h["memory"]
+            used = m["total_kb"] - m["available_kb"]
+            lines.append(f"Memory   {mb(used)} in use, {mb(m['available_kb'])} free of {mb(m['total_kb'])}")
+        if h.get("top_memory"):
+            lines += ["", "Using the most memory:"] + [f"  {mb(kb):>7}  {name}" for name, kb in h["top_memory"]]
+        if h.get("top_storage"):
+            lines += ["", "Using the most storage:"] + [f"  {mbs:>4} MB  {name}" for name, mbs in h["top_storage"]]
+        self.health.set("\n".join(lines))
+
+    # cleanup
+
+    def show_dates(self):
+        if not self.alive():
+            return
+        if not self.app.last_cleanup_result:
+            self.clean.set("Clears app caches and checks that disabled apps stayed disabled.\n"
+                           f"Runs by itself weekly. Last run: {when(cfg.get('last_cleanup', 0))}")
+        names = maintenance.list_backups(BACKUP_ROOT)
+        self.backup.set(f"Daily, keeps the last {maintenance.BACKUPS_KEPT}. Latest: {when(cfg.get('last_backup', 0))}"
+                        f" ({len(names)} saved)")
+
+    def clean_now(self):
+        self.clean.set("Cleaning up…")
+        self.app.run_job(lambda d: maintenance.cleanup(d, debloat_packages()), self.app.cleanup_done,
+                         lambda e: self.alive() and self.clean.set(f"Cleanup failed ({e})"))
+
+    def show_cleanup(self, r):
+        if not self.alive():
+            return
+        msg = f"Last run {when(cfg.get('last_cleanup', 0))}: freed {r['freed_kb'] / 1024:.0f} MB of cache."
+        if r["came_back"]:
+            msg += "\nThese disabled apps turned themselves back on:\n  " + "\n  ".join(r["came_back"])
+            self.fix_btn.pack(side="left", padx=(6, 0))
+        else:
+            msg += "\nAll disabled apps are still disabled."
+            self.fix_btn.pack_forget()
+        self.clean.set(msg)
+
+    def fix(self):
+        pkgs = list(self.app.last_cleanup_result["came_back"]) if self.app.last_cleanup_result else []
+        if not pkgs:
+            return
+        self.clean.set("Disabling them again…")
+
+        def job(d):
+            maintenance.disable(d, pkgs)
+            return maintenance.cleanup(d, debloat_packages())
+
+        self.app.run_job(job, self.app.cleanup_done,
+                         lambda e: self.alive() and self.clean.set(f"Couldn't disable them ({e})"))
+
+    # backup
+
+    def backup_now(self):
+        self.backup.set("Backing up…")
+        self.app.run_job(lambda d: maintenance.backup(d, BACKUP_ROOT), lambda folder: self.app._mark("last_backup"),
+                         lambda e: self.alive() and self.backup.set(f"Backup failed ({e})"))
+
+    def restore_latest(self):
+        names = maintenance.list_backups(BACKUP_ROOT)
+        if not names:
+            messagebox.showinfo("Restore", "There are no backups yet.", parent=self.win)
+            return
+        if not messagebox.askyesno(
+                "Restore", f"Restore the backup from {names[0]}?\n\nThis puts back the dock order, the disabled "
+                "apps, the screensaver and screen-timeout settings, and sets this launcher as home.",
+                parent=self.win):
+            return
+        folder = os.path.join(BACKUP_ROOT, names[0])
+        self.backup.set("Restoring…")
+        self.app.run_job(lambda d: maintenance.restore(d, folder),
+                         lambda done: self.alive() and self.backup.set("Restored: " + ", ".join(done)),
+                         lambda e: self.alive() and self.backup.set(f"Restore failed: {e}"))
 
 
 def main():
