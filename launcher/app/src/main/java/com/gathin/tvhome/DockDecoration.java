@@ -1,18 +1,24 @@
 package com.gathin.tvhome;
 
 import android.graphics.Canvas;
+import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.graphics.Shader;
 import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 /**
- * Draws the tvOS style lighter band behind all the app tiles, with a hairline under the first (dock)
- * row, and adds a gap below the dock row. Rows scrolled off screen stretch the band past the edge
+ * Draws a tvOS style pane of glass behind all the app tiles, with a hairline under the first (dock)
+ * row, and adds a gap below the dock row. Rows scrolled off screen stretch the pane past the edge
  * instead of showing a rounded end mid-screen.
+ *
+ * The glass is a translucent white wash brightest at the top, with an edge that catches light along
+ * the top: the ambient glow shows through it. No live blur: what sits behind it (black and a soft
+ * radial glow) is already blurry, and blur would cost too much on a 1 GB TV.
  */
 public class DockDecoration extends RecyclerView.ItemDecoration {
 
@@ -22,15 +28,14 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
     private final Paint edge = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint divider = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF rect = new RectF();
+    private float shaderTop = Float.NaN, shaderBottom = Float.NaN;
 
     DockDecoration(int dockSize, float density) {
         this.dockSize = dockSize;
         this.density = density;
-        band.setColor(0xFF141416);
         edge.setStyle(Paint.Style.STROKE);
         edge.setStrokeWidth(density);
-        edge.setColor(0x1FFFFFFF);
-        divider.setColor(0x1AFFFFFF);
+        divider.setColor(0x1FFFFFFF);
     }
 
     @Override
@@ -77,6 +82,19 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
                 Float.isNaN(top) ? -radius * 2 : top - pad,
                 right + pad,
                 Float.isNaN(bottom) ? parent.getHeight() + radius * 2 : bottom + pad);
+        // Gradients are sized to what is on screen, so the sheen stays at the visible top of the pane.
+        float sheenTop = Math.max(rect.top, 0f);
+        float sheenBottom = Math.min(rect.bottom, parent.getHeight());
+        if (sheenTop != shaderTop || sheenBottom != shaderBottom) {
+            shaderTop = sheenTop;
+            shaderBottom = sheenBottom;
+            band.setShader(new LinearGradient(0, sheenTop, 0, sheenBottom,
+                    new int[]{0x2EFFFFFF, 0x17FFFFFF, 0x0FFFFFFF}, new float[]{0f, 0.35f, 1f},
+                    Shader.TileMode.CLAMP));
+            edge.setShader(new LinearGradient(0, sheenTop, 0, sheenBottom,
+                    new int[]{0x66FFFFFF, 0x1FFFFFFF, 0x14FFFFFF}, new float[]{0f, 0.3f, 1f},
+                    Shader.TileMode.CLAMP));
+        }
         c.drawRoundRect(rect, radius, radius, band);
         c.drawRoundRect(rect, radius, radius, edge);
 
