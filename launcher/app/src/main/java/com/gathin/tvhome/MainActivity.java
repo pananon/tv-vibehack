@@ -331,10 +331,23 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         return true;
     }
 
+    /**
+     * Left/Right walk the apps in order, across rows, and wrap from the last app to the first (and
+     * back), skipping empty dock slots. Without this, Android's focus search leaves the grid at a
+     * row's end and lands on whichever top-bar pill is nearest.
+     */
     @Override
-    public boolean onTileRightKey(int position) {
-        // The last app in a short dock: don't let focus fall diagonally into the grid.
-        return position < COLUMNS - 1 && adapter.isEmptySlot(position + 1);
+    public boolean onTileHorizontalKey(int position, int keyCode) {
+        int count = adapter.getItemCount();
+        if (count < 2) return true;
+        int step = keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1;
+        int target = position;
+        for (int i = 0; i < count; i++) {
+            target = (target + step + count) % count;
+            if (!adapter.isEmptySlot(target)) break;
+        }
+        if (target != position) focusTile(target);
+        return true;
     }
 
     private void focusTile(int position) {

@@ -43,8 +43,8 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         /** Called for D-pad Up/Down on a tile. Return true when handled. */
         boolean onTileVerticalKey(int position, int keyCode);
 
-        /** D-pad Right on a tile. Return true to stop focus moving (e.g. into an empty dock slot). */
-        boolean onTileRightKey(int position);
+        /** D-pad Left/Right on a tile. Return true when handled. */
+        boolean onTileHorizontalKey(int position, int keyCode);
 
         /** Menu key or long-press OK on a tile: dock editing and app info. */
         void onTileMenu(int position, View card);
@@ -329,9 +329,10 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
 
             card.setOnKeyListener((view, keyCode, event) -> {
                 if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
-                if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
                     int pos = getBindingAdapterPosition();
-                    return listener != null && pos != RecyclerView.NO_POSITION && listener.onTileRightKey(pos);
+                    return listener != null && pos != RecyclerView.NO_POSITION
+                            && listener.onTileHorizontalKey(pos, keyCode);
                 }
                 if (keyCode == KeyEvent.KEYCODE_MENU) {
                     int pos = getBindingAdapterPosition();
