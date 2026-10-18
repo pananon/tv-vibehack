@@ -35,7 +35,7 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
         this.density = density;
         edge.setStyle(Paint.Style.STROKE);
         edge.setStrokeWidth(density);
-        divider.setColor(0x1FFFFFFF);
+        divider.setColor(0x2EFFFFFF);
     }
 
     @Override
@@ -89,10 +89,10 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
             shaderTop = sheenTop;
             shaderBottom = sheenBottom;
             band.setShader(new LinearGradient(0, sheenTop, 0, sheenBottom,
-                    new int[]{0x2EFFFFFF, 0x17FFFFFF, 0x0FFFFFFF}, new float[]{0f, 0.35f, 1f},
+                    new int[]{0x4DFFFFFF, 0x30FFFFFF, 0x24FFFFFF}, new float[]{0f, 0.4f, 1f},
                     Shader.TileMode.CLAMP));
             edge.setShader(new LinearGradient(0, sheenTop, 0, sheenBottom,
-                    new int[]{0x66FFFFFF, 0x1FFFFFFF, 0x14FFFFFF}, new float[]{0f, 0.3f, 1f},
+                    new int[]{0xA6FFFFFF, 0x40FFFFFF, 0x26FFFFFF}, new float[]{0f, 0.3f, 1f},
                     Shader.TileMode.CLAMP));
         }
         c.drawRoundRect(rect, radius, radius, band);
