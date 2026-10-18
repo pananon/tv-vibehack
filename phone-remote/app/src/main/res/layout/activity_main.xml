@@ -58,6 +58,7 @@
             <Button android:id="@+id/back" style="@style/Btn" android:text="Back" />
             <Button android:id="@+id/home" style="@style/Btn" android:text="Home" />
             <Button android:id="@+id/menu" style="@style/Btn" android:text="Menu" />
+            <Button android:id="@+id/tab" style="@style/Btn" android:text="Tab" />
         </LinearLayout>
         <LinearLayout style="@style/Row">
             <Button android:id="@+id/rew" style="@style/Btn" android:text="◀◀" />

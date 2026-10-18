@@ -639,8 +639,10 @@ class RemoteApp:
 
         # back / home / menu
         row = self._section("nav", pady=4, **px)
-        for text, code in (("Back", "KEYCODE_BACK"), ("Home", "KEYCODE_HOME"), ("Menu", "KEYCODE_MENU")):
-            Button(row, text, self.k(code), w=72).pack(side="left", padx=3)
+        # Tab reaches buttons some phone-style apps leave out of D-pad focus (e.g. Ojo's "+").
+        for text, code in (("Back", "KEYCODE_BACK"), ("Home", "KEYCODE_HOME"), ("Menu", "KEYCODE_MENU"),
+                           ("Tab", "KEYCODE_TAB")):
+            Button(row, text, self.k(code), w=52).pack(side="left", padx=3)
 
         # media
         row = self._section("media", pady=(10, 4), **px)

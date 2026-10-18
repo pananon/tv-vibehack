@@ -111,6 +111,7 @@ public class MainActivity extends Activity {
         key(R.id.back, "KEYCODE_BACK", false);
         key(R.id.home, "KEYCODE_HOME", false);
         key(R.id.menu, "KEYCODE_MENU", false);
+        key(R.id.tab, "KEYCODE_TAB", false);   // reaches buttons some apps leave out of D-pad focus
         key(R.id.rew, "KEYCODE_MEDIA_REWIND", false);
         key(R.id.play, "KEYCODE_MEDIA_PLAY_PAUSE", false);
         key(R.id.ff, "KEYCODE_MEDIA_FAST_FORWARD", false);
