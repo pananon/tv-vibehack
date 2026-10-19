@@ -2,8 +2,10 @@ package com.gathin.tvhome;
 
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
@@ -15,12 +17,15 @@ import android.media.tv.TvInputManager;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.text.SpannableString;
+import android.text.Spanned;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
@@ -37,15 +42,18 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.dynamicanimation.animation.DynamicAnimation;
+import androidx.dynamicanimation.animation.FloatPropertyCompat;
 import androidx.dynamicanimation.animation.SpringAnimation;
 import androidx.dynamicanimation.animation.SpringForce;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * tvOS style home: black, a pinned dock row, an app grid, and one glass highlight that springs between tiles.
@@ -56,6 +64,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     static int COLUMNS = 4;
     private static final long MINUTE_MS = 60_000L;
     private String liveTvPkg;
+    private String liveTvAction;
+    private String sourcePanelService;
+    private String sourcePanelAction;
 
     private AppAdapter adapter;
     private RecyclerView grid;
@@ -69,13 +80,20 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private boolean ambientShown;
     private int ambientTarget;
     private TextView greeting;
+    private View btnInputs;
     private TextView btnWifi;
     private View weatherBox;
     private ImageView weatherIcon;
     private TextView weatherTemp;
     private boolean weatherLoading;
+    private TextView shamsiDate;
+    private boolean shamsi;
+    private String vpnApp;
     private SpringAnimation springX, springY;
     private float glassTargetX, glassTargetY;
+    // How far the grid has scrolled the glass. springY works without it, in grid content space, so a
+    // scroll moves the glass in lockstep with its tile instead of becoming a moving spring target.
+    private float glassScrollShift;
     private boolean glassShown;
     // Static so they survive the activity being destroyed while another app is open (low-memory TVs,
     // or Developer options → "Don't keep activities"); they only reset when the process dies.
@@ -85,6 +103,42 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private float density;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    /** Refreshes the network pill when the connection changes: at boot Wi-Fi often connects after Home is shown. */
+    private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
+        @Override
+        public void onAvailable(@NonNull Network network) {
+            handler.post(MainActivity.this::updateWifiLabel);
+        }
+
+        @Override
+        public void onLost(@NonNull Network network) {
+            handler.post(MainActivity.this::updateWifiLabel);
+        }
+    };
+    /** Shows the Inputs pill once the TV registers an input: at boot HDMI inputs can appear after Home is shown. */
+    private final TvInputManager.TvInputCallback inputCallback = new TvInputManager.TvInputCallback() {
+        @Override
+        public void onInputAdded(String inputId) {
+            updateInputsButton();
+        }
+
+        @Override
+        public void onInputRemoved(String inputId) {
+            updateInputsButton();
+        }
+    };
+    /** Listens for any VPN coming up or going down, even one this app's traffic is excluded from. */
+    private final ConnectivityManager.NetworkCallback vpnCallback = new ConnectivityManager.NetworkCallback() {
+        @Override
+        public void onAvailable(@NonNull Network network) {
+            handler.post(MainActivity.this::updateWifiLabel);
+        }
+
+        @Override
+        public void onLost(@NonNull Network network) {
+            handler.post(MainActivity.this::updateWifiLabel);
+        }
+    };
     private final Runnable minuteTick = new Runnable() {
         @Override
         public void run() {
@@ -100,10 +154,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         density = getResources().getDisplayMetrics().density;
-        COLUMNS = Math.max(1, getResources().getInteger(R.integer.columns));
-        liveTvPkg = getString(R.string.live_tv_package).trim();
+        // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
+        Config cfg = Config.load(this);
+        COLUMNS = cfg.columns;
+        liveTvPkg = cfg.liveTvPackage;
+        liveTvAction = cfg.liveTvAction;
+        sourcePanelService = cfg.sourcePanelService;
+        sourcePanelAction = cfg.sourcePanelAction;
 
         root = findViewById(R.id.root);
+        root.setBackgroundColor(cfg.backgroundColor);
+        if (cfg.wallpaper != null) showWallpaper(cfg.wallpaper);
         glass = findViewById(R.id.glass);
         ambient = findViewById(R.id.ambient);
         heroName = findViewById(R.id.heroName);
@@ -118,6 +179,15 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         weatherBox = findViewById(R.id.weather);
         weatherIcon = findViewById(R.id.weatherIcon);
         weatherTemp = findViewById(R.id.weatherTemp);
+        shamsiDate = findViewById(R.id.shamsiDate);
+        shamsi = cfg.shamsiDate;
+        if (shamsi) {
+            shamsiDate.setVisibility(View.VISIBLE);
+            TextView date = findViewById(R.id.date);
+            date.setTextSize(11f);
+            date.setPadding(0, (int) (4 * density), 0, 0);
+        }
+        vpnApp = cfg.vpnApp;
 
         grid = findViewById(R.id.grid);
         grid.setLayoutManager(new GridLayoutManager(this, COLUMNS));
@@ -126,14 +196,20 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         grid.addItemDecoration(new DockDecoration(COLUMNS, density));
         grid.setLayoutAnimation(new LayoutAnimationController(
                 AnimationUtils.loadAnimation(this, R.anim.tile_enter), 0.06f));
-        adapter = new AppAdapter(this, this, COLUMNS);
+        adapter = new AppAdapter(this, this, COLUMNS, cfg);
         grid.setAdapter(adapter);
 
-        // tvOS layout: push the dock row to the bottom of the screen; the grid hides below until you press Down.
+        // tvOS layout: push the dock row towards the bottom of the screen, leaving room for
+        // rows_below_dock grid rows under it; the rest of the grid stays below until you press Down.
+        int rowsBelowDock = cfg.rowsBelowDock;
         grid.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
             int h = b - t;
-            int dockRow = (int) ((145 + 6 + 12) * density);   // item height plus DockDecoration offsets
-            int want = Math.max(0, h - dockRow - (int) (30 * density));
+            // Item height follows the tile size, which follows the column count (AppAdapter.tileWidthPx).
+            int inner = (r - l) - grid.getPaddingLeft() - grid.getPaddingRight();
+            int itemH = AppAdapter.itemHeightPx(AppAdapter.tileHeightPx(AppAdapter.tileWidthPx(inner, COLUMNS, density)), density);
+            int dockRow = itemH + (int) ((6 + 12) * density);   // item height plus DockDecoration offsets
+            int gridRows = itemH * rowsBelowDock;
+            int want = Math.max(0, h - dockRow - gridRows - (int) (30 * density));
             if (grid.getPaddingTop() != want) {
                 grid.setPadding(grid.getPaddingLeft(), want, grid.getPaddingRight(), grid.getPaddingBottom());
             }
@@ -145,22 +221,36 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
                 if (!glassShown) return;
                 glassTargetY -= dy;
-                if (springY.isRunning()) springY.animateToFinalPosition(glassTargetY);
-                else glass.setTranslationY(glassTargetY);
+                glassScrollShift -= dy;
+                glass.setTranslationY(glass.getTranslationY() - dy);
             }
         });
 
         // Liquid feel: soft springs on the highlight's position.
         springX = new SpringAnimation(glass, DynamicAnimation.TRANSLATION_X);
-        springY = new SpringAnimation(glass, DynamicAnimation.TRANSLATION_Y);
+        springY = new SpringAnimation(glass, new FloatPropertyCompat<View>("glassContentY") {
+            @Override
+            public float getValue(View v) {
+                return v.getTranslationY() - glassScrollShift;
+            }
+
+            @Override
+            public void setValue(View v, float value) {
+                v.setTranslationY(value + glassScrollShift);
+            }
+        });
         for (SpringAnimation s : new SpringAnimation[]{springX, springY}) {
             s.setSpring(new SpringForce().setStiffness(260f).setDampingRatio(0.58f));
         }
 
-        View btnInputs = findViewById(R.id.btnInputs);
+        btnInputs = findViewById(R.id.btnInputs);
         View btnSettings = findViewById(R.id.btnSettings);
         btnInputs.setOnClickListener(v -> showInputs());
-        btnWifi.setOnClickListener(v -> open(new Intent(Settings.ACTION_WIFI_SETTINGS)));
+        btnWifi.setOnClickListener(v -> openNetworkPill());
+        btnWifi.setOnLongClickListener(v -> {
+            open(new Intent(Settings.ACTION_WIFI_SETTINGS));
+            return true;
+        });
         btnSettings.setOnClickListener(v -> open(new Intent(Settings.ACTION_SETTINGS)));
 
         // Keep focus on the top bar at its ends and at the top: Android's focus finder would otherwise
@@ -168,7 +258,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         View.OnKeyListener pillKeys = (v, keyCode, event) -> {
             if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
             if (keyCode == KeyEvent.KEYCODE_DPAD_UP) return true;
-            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT && v.getId() == R.id.btnInputs) return true;
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                // The left end is Inputs, or Wi-Fi on a box without inputs.
+                return v.getId() == R.id.btnInputs
+                        || (v.getId() == R.id.btnWifi && btnInputs.getVisibility() != View.VISIBLE);
+            }
             return keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && v.getId() == R.id.btnSettings;
         };
         btnInputs.setOnKeyListener(pillKeys);
@@ -180,6 +274,43 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             boolean onTile = newF != null && newF.getId() == R.id.card;
             if (!onTile) hideGlass();
         });
+
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
+        if (tim != null) tim.registerCallback(inputCallback, handler);
+        if (cm != null) {
+            cm.registerDefaultNetworkCallback(networkCallback);
+            cm.registerNetworkCallback(new NetworkRequest.Builder()
+                    .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                    .build(), vpnCallback);
+        }
+    }
+
+    /**
+     * A theme's full-screen picture behind everything. Decoded once, downsampled to the screen so a 4K
+     * JPEG costs a 1080p bitmap at most (about 8 MB), which is the price of a wallpaper on a 1 GB TV.
+     */
+    private void showWallpaper(File file) {
+        try {
+            android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+            android.graphics.BitmapFactory.Options opts = new android.graphics.BitmapFactory.Options();
+            opts.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeFile(file.getPath(), opts);
+            int sample = 1;
+            while (opts.outWidth / (sample * 2) >= dm.widthPixels && opts.outHeight / (sample * 2) >= dm.heightPixels) sample *= 2;
+            opts.inJustDecodeBounds = false;
+            opts.inSampleSize = sample;
+            opts.inPreferredConfig = android.graphics.Bitmap.Config.RGB_565;   // no alpha needed, half the memory
+            android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeFile(file.getPath(), opts);
+            if (bmp == null) return;
+            android.widget.ImageView wall = new android.widget.ImageView(this);
+            wall.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+            wall.setImageBitmap(bmp);
+            root.addView(wall, 0, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        } catch (Exception | OutOfMemoryError e) {
+            // A bad or huge picture must never take the home screen down; the plain colour stays.
+        }
     }
 
     @Override
@@ -199,6 +330,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         updateGreeting();
         updateWifiLabel();
         updateWeather();
+        updateInputsButton();
         handler.postDelayed(minuteTick, MINUTE_MS);
 
         // Return to the app we left from, or the same slot if that app is gone. Always refocus: after
@@ -213,6 +345,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     protected void onPause() {
         super.onPause();
         handler.removeCallbacks(minuteTick);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
+        if (tim != null) tim.unregisterCallback(inputCallback);
+        if (cm != null) {
+            cm.unregisterNetworkCallback(networkCallback);
+            cm.unregisterNetworkCallback(vpnCallback);
+        }
     }
 
     @Override
@@ -240,7 +384,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             lp.width = (int) w;
             lp.height = (int) h;
             glass.setLayoutParams(lp);
-            glass.setRadius(16f * density * AppAdapter.FOCUS_SCALE + pad);
+            glass.setRadius(AppAdapter.cornerRadius(card.getWidth(), density) * AppAdapter.FOCUS_SCALE + pad);
         }
         glassTargetX = x;
         glassTargetY = y;
@@ -253,7 +397,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             glassShown = true;
         } else {
             springX.animateToFinalPosition(x);
-            springY.animateToFinalPosition(y);
+            springY.animateToFinalPosition(y - glassScrollShift);
         }
         View item = (View) card.getParent();
         if (position < COLUMNS) {
@@ -340,6 +484,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     public boolean onTileVerticalKey(int position, int keyCode) {
         int count = adapter.getItemCount();
         int target;
+        // my-tv: Left/Right go to onTileHorizontalKey (loop through all apps), never here.
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
             if (position < COLUMNS) return false;          // dock row: let focus move to the top bar
             target = position - COLUMNS;
@@ -412,20 +557,35 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         else if (hour < 22) res = R.string.good_evening;
         else res = R.string.good_night;
         greeting.setText(res);
+        if (shamsi) shamsiDate.setText(Shamsi.today());
     }
 
     /** Shows the Wi-Fi network name on the button when we can read it, otherwise the connection type. */
     private void updateWifiLabel() {
         String text = getString(R.string.wifi);
+        boolean vpn = false;
         try {
             ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-            Network net = cm != null ? cm.getActiveNetwork() : null;
-            NetworkCapabilities caps = net != null ? cm.getNetworkCapabilities(net) : null;
-            if (caps == null) {
+            boolean online = false, wifi = false, ethernet = false;
+            // All networks, not just the active one: with a VPN up the active network is the VPN itself.
+            for (Network net : cm != null ? cm.getAllNetworks() : new Network[0]) {
+                NetworkCapabilities caps = cm.getNetworkCapabilities(net);
+                if (caps == null) continue;
+                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                    vpn = true;
+                    continue;
+                }
+                if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) continue;
+                online = true;
+                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) ethernet = true;
+                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) wifi = true;
+            }
+            if (!online) {
                 text = getString(R.string.offline);
-            } else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                vpn = false;
+            } else if (ethernet) {
                 text = getString(R.string.ethernet);
-            } else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+            } else if (wifi) {
                 WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
                 WifiInfo info = wm != null ? wm.getConnectionInfo() : null;
                 String ssid = info != null ? info.getSSID() : null;
@@ -436,7 +596,59 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
         } catch (Exception ignored) {
         }
-        btnWifi.setText(text);
+        if (vpn) {
+            // Network name, then a green lock-and-VPN capsule drawn in place of the word "VPN".
+            String badge = getString(R.string.vpn);
+            SpannableString label = new SpannableString(text + " " + badge);
+            label.setSpan(new VpnBadge(getDrawable(R.drawable.ic_lock), density),
+                    text.length() + 1, label.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            btnWifi.setText(label);
+        } else {
+            btnWifi.setText(text);
+        }
+    }
+
+    /** The network pill opens the VPN app when one is configured and installed, otherwise Wi-Fi settings. */
+    private void openNetworkPill() {
+        Intent i = vpnApp.isEmpty() ? null : getPackageManager().getLeanbackLaunchIntentForPackage(vpnApp);
+        if (i == null && !vpnApp.isEmpty()) i = getPackageManager().getLaunchIntentForPackage(vpnApp);
+        open(i != null ? i : new Intent(Settings.ACTION_WIFI_SETTINGS));
+    }
+
+    /** Hides the Inputs pill when it would have nothing to list: streaming boxes have no HDMI-in, AV or tuner. */
+    private void updateInputsButton() {
+        boolean any = liveTvIntent() != null || !sourcePanelService.isEmpty();
+        TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
+        if (!any && tim != null) {
+            for (TvInputInfo info : tim.getTvInputList()) {
+                if (info.isPassthroughInput()) {
+                    any = true;
+                    break;
+                }
+            }
+        }
+        btnInputs.setVisibility(any ? View.VISIBLE : View.GONE);
+    }
+
+    /** The Live TV app's launch intent: its leanback entry point, or the configured action if it has none. */
+    private Intent liveTvIntent() {
+        if (liveTvPkg.isEmpty()) return null;
+        Intent i = getPackageManager().getLeanbackLaunchIntentForPackage(liveTvPkg);
+        if (i != null || liveTvAction.isEmpty()) return i;
+        Intent byAction = new Intent(liveTvAction).setPackage(liveTvPkg);
+        return getPackageManager().resolveActivity(byAction, 0) != null ? byAction : null;
+    }
+
+    /** The TV's own source-selection panel, for TVs that have no TvInputManager (TCL Android TV 9). */
+    private void openSourcePanel() {
+        Intent i = new Intent(sourcePanelAction);
+        ComponentName c = ComponentName.unflattenFromString(sourcePanelService);
+        if (c != null) i.setComponent(c);
+        try {
+            startService(i);
+        } catch (Exception e) {
+            Toast.makeText(this, R.string.not_available, Toast.LENGTH_SHORT).show();
+        }
     }
 
     /** Shows the last reading, and fetches a new one in the background when it is due. */
@@ -481,7 +693,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         try {
             startActivity(i);
         } catch (ActivityNotFoundException e) {
-            Toast.makeText(this, "Not available on this TV", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, R.string.not_available, Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -501,6 +713,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
         boolean sawNonHdmi = false;
+        String tunerId = null;
+        boolean tunerIsHw = false;
         if (tim != null) {
             List<TvInputInfo> inputs = new ArrayList<>(tim.getTvInputList());
             // HDMI ports first in port order, then AV and the rest.
@@ -509,14 +723,33 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 if (ha != hb) return ha ? -1 : 1;
                 return String.valueOf(a.loadLabel(this)).compareToIgnoreCase(String.valueOf(b.loadLabel(this)));
             });
+            // Some TVs (Sony) report every HDMI port as connected whether or not anything is plugged in,
+            // so drop the HDMI status then. A TV with every port really in use loses it too.
+            int hdmiPorts = 0, hdmiConnected = 0;
             for (TvInputInfo info : inputs) {
+                if (!info.isPassthroughInput() || info.getType() != TvInputInfo.TYPE_HDMI) continue;
+                hdmiPorts++;
+                if (tim.getInputState(info.getId()) == TvInputManager.INPUT_STATE_CONNECTED) hdmiConnected++;
+            }
+            boolean hdmiStateBogus = hdmiPorts > 1 && hdmiConnected == hdmiPorts;
+            for (TvInputInfo info : inputs) {
+                if (info.getType() == TvInputInfo.TYPE_TUNER
+                        && (info.getServiceInfo().applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+                    // Prefer a hardware tuner: the framework names those ".../HW<n>". System apps such as
+                    // AirPlay also register software inputs of type TUNER and may sort first (seen on TCL G05).
+                    boolean hw = info.getId().matches(".*/HW\\d+$");
+                    if (tunerId == null || (hw && !tunerIsHw) || (hw == tunerIsHw && info.getId().compareTo(tunerId) < 0)) {
+                        tunerId = info.getId();
+                        tunerIsHw = hw;
+                    }
+                }
                 if (!info.isPassthroughInput()) continue;
                 CharSequence l = info.loadLabel(this);
                 String label = l == null ? info.getId() : l.toString();
                 boolean hdmi = info.getType() == TvInputInfo.TYPE_HDMI;
-                if (hdmi && !label.toUpperCase().contains("HDMI")) label = "HDMI " + label;
+                if (hdmi && !label.toUpperCase(Locale.ROOT).contains("HDMI")) label = "HDMI " + label;
                 final String id = info.getId();
-                int state = tim.getInputState(id);
+                int state = hdmi && hdmiStateBogus ? -1 : tim.getInputState(id);
                 if (!hdmi && rows.getChildCount() > 0 && !sawNonHdmi) addSeparator(rows);
                 if (!hdmi) sawNonHdmi = true;
                 addInputRow(rows, popup, hdmi ? R.drawable.ic_input : R.drawable.ic_av, label, state,
@@ -524,15 +757,29 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                                 TvContract.buildChannelUriForPassthroughInput(id), "vnd.android.cursor.item/channel")));
             }
         }
-        Intent liveTv = liveTvPkg.isEmpty() ? null : getPackageManager().getLeanbackLaunchIntentForPackage(liveTvPkg);
+        // Nothing to list where there is no TvInputManager: the TV's own source panel switches inputs.
+        if (rows.getChildCount() == 0 && !sourcePanelService.isEmpty()) {
+            addInputRow(rows, popup, R.drawable.ic_input, getString(R.string.inputs), -1, this::openSourcePanel);
+        }
+        Intent liveTv = liveTvIntent();
+        if (liveTv != null && tunerId != null) {
+            liveTv = new Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(TvContract.buildChannelUriForPassthroughInput(tunerId), "vnd.android.cursor.item/channel")
+                    .setPackage(liveTvPkg);
+        }
         if (liveTv != null) {
             if (rows.getChildCount() > 0) addSeparator(rows);
-            addInputRow(rows, popup, R.drawable.ic_livetv, getString(R.string.live_tv), -1, () -> open(liveTv));
+            final Intent liveTvIntent = liveTv;
+            addInputRow(rows, popup, R.drawable.ic_livetv, getString(R.string.live_tv), -1, () -> open(liveTvIntent));
         }
         if (rows.getChildCount() == 0) {
             Toast.makeText(this, R.string.no_inputs, Toast.LENGTH_SHORT).show();
             return;
         }
+
+        // Fit the widest row: TVs that report a status on every port (Sony) would otherwise squeeze the names out.
+        panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        popup.setWidth(Math.max(width, panel.getMeasuredWidth()));
 
         // Drop in: fade and unfold from the top edge.
         panel.setAlpha(0f);

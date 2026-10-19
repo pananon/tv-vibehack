@@ -16,7 +16,16 @@
     <string name="good_night">Good night</string>
     <string name="ethernet">Ethernet</string>
     <string name="offline">Offline</string>
+    <string name="not_available">Not available on this TV</string>
+    <string name="cant_open">Can\'t open %1$s</string>
+    <string name="date_format">EEEE  d MMMM</string>
     <string name="dream_name">Clock</string>
+    <string name="vpn">VPN</string>
+    <string name="home_settings">Default home</string>
+    <string name="home_settings_help">Choose a home screen in system settings, then press Home.</string>
+    <string name="input_key_service_description">Opens the input switcher when the remote\'s Input button is pressed.</string>
+    <string name="home_key_name">Home button</string>
+    <string name="home_key_description">Makes the remote\'s Home button open this launcher.</string>
     <string name="now_playing">Now playing</string>
     <string name="ambient_name">Ambient</string>
     <string name="claude_name">Claude</string>

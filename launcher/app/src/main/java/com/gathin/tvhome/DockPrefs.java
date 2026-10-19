@@ -5,12 +5,11 @@ import android.content.SharedPreferences;
 import android.text.TextUtils;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**
  * The dock's apps, in order. Edited on the TV (Menu or long-press OK on a tile) and saved here;
- * res/values/config.xml (dock_apps) is only the starting order before the first edit.
+ * config.xml (dock_apps) or a theme's config.json is only the starting order before the first edit.
  */
 final class DockPrefs {
 
@@ -20,10 +19,11 @@ final class DockPrefs {
     private DockPrefs() {
     }
 
-    static List<String> load(Context ctx) {
+    /** The saved dock, or defaults (config.xml dock_apps, or a theme's config.json) before the first edit. */
+    static List<String> load(Context ctx, List<String> defaults) {
         String saved = prefs(ctx).getString(KEY, null);
         if (saved == null) {
-            return new ArrayList<>(Arrays.asList(ctx.getResources().getStringArray(R.array.dock_apps)));
+            return new ArrayList<>(defaults);
         }
         List<String> out = new ArrayList<>();
         for (String pkg : saved.split(",")) {

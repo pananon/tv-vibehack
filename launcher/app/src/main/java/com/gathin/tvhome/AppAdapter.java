@@ -11,6 +11,7 @@ import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
+import android.provider.Settings;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -40,7 +41,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     interface TileListener {
         void onTileFocused(int position, View card);
 
-        /** Called for D-pad Up/Down on a tile. Return true when handled. */
+        /** Called for a D-pad direction key on a tile. Return true when handled (focus stays put). */
         boolean onTileVerticalKey(int position, int keyCode);
 
         /** D-pad Left/Right on a tile. Return true when handled. */
@@ -81,29 +82,56 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     }
 
     static final float FOCUS_SCALE = 1.10f;
+    /** Design size of a tile (dp); tiles shrink from here when the columns don't fit, see tileWidthPx. */
+    static final float DESIGN_W_DP = 180f, DESIGN_H_DP = 101f;
+
+    /**
+     * Tile width for a grid of this inner width: the cell minus room for the focus zoom and the glass
+     * highlight, capped at the design size so 4 columns on a 1080p TV look exactly as before.
+     */
+    static int tileWidthPx(int innerWidthPx, int columns, float density) {
+        int design = Math.round(DESIGN_W_DP * density);
+        if (innerWidthPx <= 0 || columns <= 0) return design;
+        int cell = innerWidthPx / columns;
+        int fit = (int) ((cell - 12 * density) / FOCUS_SCALE);
+        return Math.max(Math.round(80 * density), Math.min(design, fit));
+    }
+
+    static int tileHeightPx(int tileWidthPx) {
+        return Math.round(tileWidthPx * DESIGN_H_DP / DESIGN_W_DP);
+    }
+
+    /** Height of one grid item: the tile, the name label under it and the item's own padding. */
+    static int itemHeightPx(int tileHeightPx, float density) {
+        return tileHeightPx + Math.round(45 * density);
+    }
 
     private final Context ctx;
     private final TileListener listener;
     private final int dockSize;
-    /** Dock order: edited on the TV and saved in DockPrefs; config.xml (dock_apps) is the default. */
+    /** Dock order: edited on the TV (DockPrefs); before the first edit, config.xml or a theme. */
     private List<String> favourites;
+    private final List<String> defaultDock;
     /** Never shown as tiles (res/values/config.xml, hidden_apps). */
     private final Set<String> hidden;
+    private final boolean showHomeSettings;
     private final List<Entry> items = new ArrayList<>();
 
-    AppAdapter(Context ctx, TileListener listener, int dockSize) {
+    AppAdapter(Context ctx, TileListener listener, int dockSize, Config cfg) {
         this.ctx = ctx;
         this.listener = listener;
         this.dockSize = dockSize;
-        this.favourites = DockPrefs.load(ctx);
-        this.hidden = new HashSet<>(Arrays.asList(ctx.getResources().getStringArray(R.array.hidden_apps)));
+        this.defaultDock = cfg.dockApps;
+        this.favourites = DockPrefs.load(ctx, defaultDock);
+        this.hidden = new HashSet<>(cfg.hiddenApps);
+        this.showHomeSettings = cfg.showHomeSettingsShortcut;
         // Tiles keep their identity across reload(), so a focused tile stays on its app instead of
         // its view being rebound to whatever app now sits in that slot.
         setHasStableIds(true);
     }
 
     void reload() {
-        favourites = DockPrefs.load(ctx);
+        favourites = DockPrefs.load(ctx, defaultDock);
         PackageManager pm = ctx.getPackageManager();
         Intent probe = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
         List<ResolveInfo> found = pm.queryIntentActivities(probe, 0);
@@ -127,7 +155,14 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             }
             return a.label.compareToIgnoreCase(b.label);
         });
-        // Fill the rest of the dock row with empty slots, so the grid starts on the second row.
+        // Optional "Default home" tile (config.xml), only when this TV actually has a home-screen picker.
+        if (showHomeSettings
+                && pm.resolveActivity(new Intent(Settings.ACTION_HOME_SETTINGS), 0) != null) {
+            fresh.add(new Entry(ctx.getString(R.string.home_settings),
+                    new ComponentName(ctx, HomeSettingsActivity.class), null,
+                    ctx.getDrawable(R.drawable.ic_home_settings)));
+        }
+        // my-tv: fill the rest of the dock row with empty slots, so the grid starts on the second row.
         int docked = 0;
         while (docked < fresh.size() && favourites.contains(fresh.get(docked).pkg)) docked++;
         if (docked < dockSize && fresh.size() > docked) {
@@ -142,6 +177,20 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     @Override
     public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_app, parent, false);
+        float density = parent.getResources().getDisplayMetrics().density;
+        int width = parent.getWidth() > 0 ? parent.getWidth() : parent.getMeasuredWidth();
+        int inner = width - parent.getPaddingLeft() - parent.getPaddingRight();
+        int w = tileWidthPx(inner, dockSize, density), h = tileHeightPx(w);
+        View card = v.findViewById(R.id.card);
+        ViewGroup.LayoutParams cardLp = card.getLayoutParams();
+        cardLp.width = w;
+        cardLp.height = h;
+        card.setLayoutParams(cardLp);
+        View name = v.findViewById(R.id.name);
+        ViewGroup.MarginLayoutParams nameLp = (ViewGroup.MarginLayoutParams) name.getLayoutParams();
+        nameLp.width = w;
+        nameLp.topMargin = h + Math.round(7 * density);
+        name.setLayoutParams(nameLp);
         return new Holder(v, listener);
     }
 
@@ -181,6 +230,11 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     }
 
     private void launch(Entry e) {
+        if (e.component.equals(new ComponentName(ctx, HomeSettingsActivity.class))) {
+            ctx.startActivity(new Intent(ctx, HomeSettingsActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            return;
+        }
         Intent i = new Intent(Intent.ACTION_MAIN)
                 .addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
                 .setComponent(e.component)
@@ -188,7 +242,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         try {
             ctx.startActivity(i);
         } catch (Exception ex) {
-            Toast.makeText(ctx, "Can't open " + e.label, Toast.LENGTH_SHORT).show();
+            Toast.makeText(ctx, ctx.getString(R.string.cant_open, e.label), Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -340,6 +394,11 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         return Color.HSVToColor(hsv);
     }
 
+    /** Corner radius for a tile of this width: 16dp at the design width, proportionally less when smaller. */
+    static float cornerRadius(int tileWidthPx, float density) {
+        return 16f * density * Math.min(1f, tileWidthPx / (DESIGN_W_DP * density));
+    }
+
     static final class Holder extends RecyclerView.ViewHolder {
         final View card;
         final ImageView banner;
@@ -356,11 +415,11 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             name = v.findViewById(R.id.name);
 
             final float density = v.getResources().getDisplayMetrics().density;
-            final float radius = density * 16f;
             card.setOutlineProvider(new ViewOutlineProvider() {
                 @Override
                 public void getOutline(View view, Outline outline) {
-                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radius);
+                    // 16dp at the design width, scaled down with the tile so small tiles keep the same shape.
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), cornerRadius(view.getWidth(), density));
                 }
             });
             card.setClipToOutline(true);
