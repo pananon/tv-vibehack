@@ -25,3 +25,8 @@ com.apkmirror.helper.prod
 # Stock Google TV launcher and its recommendation service, replaced by launcher/
 # (disabled by launcher\build-and-install.ps1 after the new launcher is installed)
 com.google.android.tvrecommendations
+
+# Unused system extras (screensaver is the launcher's AmbientDream)
+com.oneplus.tv.screensaver             # OnePlus screensaver
+com.google.android.backdrop            # Google Ambient Mode screensaver
+com.android.printspooler               # Print service

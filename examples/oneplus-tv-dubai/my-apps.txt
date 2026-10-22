@@ -1,0 +1,7 @@
+# Streaming apps not used on this TV. Personal choice, kept out of debloat.txt.
+# Apply:   tools/disable.sh examples/oneplus-tv-dubai/my-apps.txt
+# Undo:    tools/restore.sh examples/oneplus-tv-dubai/my-apps.txt
+com.amazon.amazonvideo.livingroom      # Prime Video
+in.startv.hotstar                      # Hotstar
+com.netflix.ninja                      # Netflix
+com.fancode.tv                         # FanCode
